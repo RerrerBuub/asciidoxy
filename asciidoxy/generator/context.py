@@ -125,6 +125,7 @@ class Context(object):
         anchors:               Mapping from flexible anchors to the containing files.
         in_to_out_file_map:    Mapping from input files for AsciiDoctor to the resulting output
                                    files.
+        current_document:      Current document being processed.
         current_document_node: Node in the Document Tree that is currently being processed.
         current_package:       Package containing the current files.
         call_stack:            Stack of actions resulting in the current action.
@@ -145,13 +146,14 @@ class Context(object):
 
     linked: Dict[str, List[List[StackFrame]]]
     # TODO: Use Document
-    inserted: MutableMapping[str, Tuple[Path, List[StackFrame]]]
+    inserted: MutableMapping[str, Tuple[Document, List[StackFrame]]]
     # TODO: Use DOcument
     anchors: Dict[str, Tuple[Path, Optional[str]]]
     # TODO: Remove
     in_to_out_file_map: Dict[Path, Path]
     # TODO: Remove
     embedded_file_map: Dict[Path, Set[Path]]
+    current_document: Document
     # TODO: Remove
     current_document_node: DocumentTreeNode
     # TODO: Use from document
@@ -161,7 +163,8 @@ class Context(object):
     documents: Dict[Path, Document]
 
     def __init__(self, reference: ApiReference, package_manager: PackageManager,
-                 current_document_node: DocumentTreeNode, current_package: Package):
+                 current_document: Document, current_document_node: DocumentTreeNode,
+                 current_package: Package):
         self.insert_filter = InsertionFilter(members={"prot": ["+public", "+protected"]})
         self.env = Environment()
 
@@ -173,11 +176,12 @@ class Context(object):
         self.anchors = {}
         self.in_to_out_file_map = {}
         self.embedded_file_map = defaultdict(set)
+        self.current_document = current_document
         self.current_document_node = current_document_node
         self.current_package = current_package
         self.call_stack = []
 
-        self.documents = {}
+        self.documents = {current_document.relative_path: current_document}
 
     def insert(self, element: ReferableElement) -> None:
         assert element.id
@@ -190,11 +194,12 @@ class Context(object):
                 raise ConsistencyError(msg)
             else:
                 logger.warning(msg)
-        self.inserted[element.id] = (self.current_document_node.in_file, self.call_stack[:])
+        self.inserted[element.id] = (self.current_document, self.call_stack[:])
 
     def sub_context(self) -> "Context":
         sub = Context(reference=self.reference,
                       package_manager=self.package_manager,
+                      current_document=self.current_document,
                       current_document_node=self.current_document_node,
                       current_package=self.current_package)
 
@@ -220,15 +225,17 @@ class Context(object):
 
         return sub
 
-    def file_with_element(self, element_id: str) -> Optional[Path]:
+    def file_with_element(self, element_id: str) -> Optional[Document]:
         if not self.multipage or element_id not in self.inserted:
+            print("Not found")
             return None
 
-        containing_file = self.inserted[element_id][0]
-        assert containing_file is not None
-        if self.current_document_node.in_file != containing_file:
-            return containing_file
+        containing_doc = self.inserted[element_id][0]
+        assert containing_doc is not None
+        if self.current_document is not containing_doc:
+            return containing_doc
         else:
+            print("Current doc")
             return None
 
     def link_to_element(self, element_id: str) -> None:

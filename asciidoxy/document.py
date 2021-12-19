@@ -198,6 +198,10 @@ class Document:
         child.embedded_in.append(self)
         self.children.append(child)
 
+    def with_relative_path(self, rel_path: Union[str, PathLike[str]]) -> "Document":
+        """Create an empty copy of this document with a different relative path."""
+        return Document(Path(rel_path), self.package, self.work_dir)
+
     def _read_title(self) -> str:
         try:
             with self.original_file.open(mode="r", encoding="utf-8") as f:

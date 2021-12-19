@@ -26,6 +26,12 @@ from asciidoxy.packaging import UnknownFileError, UnknownPackageError
 from .builders import make_compound
 
 
+def test_initial_document_is_registered(empty_context, document):
+    assert empty_context.current_document is document
+    assert document.relative_path in empty_context.documents
+    assert empty_context.documents[document.relative_path] is document
+
+
 def test_create_sub_context(empty_context):
     context = empty_context
     context.namespace = "ns"
@@ -58,9 +64,11 @@ def test_create_sub_context(empty_context):
     assert sub.anchors is context.anchors
     assert sub.in_to_out_file_map is context.in_to_out_file_map
     assert sub.embedded_file_map is context.embedded_file_map
+    assert sub.current_document is context.current_document
     assert sub.current_document_node is context.current_document_node
     assert sub.current_package is context.current_package
     assert sub.call_stack is context.call_stack
+    assert sub.documents is context.documents
 
     assert sub.insert_filter is not context.insert_filter
 
@@ -84,26 +92,30 @@ def test_create_sub_context(empty_context):
 def test_file_with_element__different_file(empty_context):
     empty_context.multipage = True
 
-    empty_context.current_document_node.in_file = Path("file_1.adoc")
+    doc1 = empty_context.current_document.with_relative_path("file_1.adoc")
+    empty_context.current_document = doc1
     empty_context.insert(make_compound(language="lang", name="type1"))
     empty_context.insert(make_compound(language="lang", name="type2"))
 
-    empty_context.current_document_node.in_file = Path("file_2.adoc")
+    doc2 = empty_context.current_document.with_relative_path("file_2.adoc")
+    empty_context.current_document = doc2
     empty_context.insert(make_compound(language="lang", name="type3"))
     empty_context.insert(make_compound(language="lang", name="type4"))
 
-    assert empty_context.file_with_element("lang-type1") == Path("file_1.adoc")
-    assert empty_context.file_with_element("lang-type2") == Path("file_1.adoc")
+    assert empty_context.file_with_element("lang-type1") is doc1
+    assert empty_context.file_with_element("lang-type2") is doc1
 
 
 def test_file_with_element__same_file(empty_context):
     empty_context.multipage = True
 
-    empty_context.current_document_node.in_file = Path("file_1.adoc")
+    doc1 = empty_context.current_document.with_relative_path("file_1.adoc")
+    empty_context.current_document = doc1
     empty_context.insert(make_compound(language="lang", name="type1"))
     empty_context.insert(make_compound(language="lang", name="type2"))
 
-    empty_context.current_document_node.in_file = Path("file_2.adoc")
+    doc2 = empty_context.current_document.with_relative_path("file_2.adoc")
+    empty_context.current_document = doc2
     empty_context.insert(make_compound(language="lang", name="type3"))
     empty_context.insert(make_compound(language="lang", name="type4"))
 
@@ -460,7 +472,7 @@ def test_link_to_element__nested_call_stack(empty_context, input_file):
     ]
 
 
-def test_insert__store_stacktrace(empty_context, input_file):
+def test_insert__store_stacktrace(empty_context, input_file, document):
     empty_context.push_stack("include(\"other_file.adoc\")", input_file, Package.INPUT_PACKAGE_NAME)
 
     element = make_compound(id="cpp-my_element", name="MyElement")
@@ -469,7 +481,7 @@ def test_insert__store_stacktrace(empty_context, input_file):
     empty_context.pop_stack()
 
     assert element.id in empty_context.inserted
-    assert empty_context.inserted[element.id] == (input_file, [
+    assert empty_context.inserted[element.id] == (document, [
         StackFrame("include(\"other_file.adoc\")", input_file, Package.INPUT_PACKAGE_NAME, False),
     ])
 

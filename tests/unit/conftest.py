@@ -163,9 +163,10 @@ def api_reference(parser_driver_factory, api_reference_set, forced_language):
 
 
 @pytest.fixture
-def context(input_file, api_reference, package_manager):
+def context(document, input_file, api_reference, package_manager):
     c = Context(reference=api_reference,
                 package_manager=package_manager,
+                current_document=document,
                 current_document_node=DocumentTreeNode(input_file),
                 current_package=Package(Package.INPUT_PACKAGE_NAME))
     return c
@@ -248,9 +249,10 @@ def single_and_multipage(request, context):
 
 
 @pytest.fixture
-def empty_context(input_file, package_manager):
+def empty_context(document, input_file, package_manager):
     return Context(reference=ApiReference(),
                    package_manager=package_manager,
+                   current_document=document,
                    current_document_node=DocumentTreeNode(input_file),
                    current_package=Package(Package.INPUT_PACKAGE_NAME))
 

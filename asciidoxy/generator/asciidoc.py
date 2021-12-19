@@ -47,7 +47,6 @@ from ..document import Document
 from ..model import ReferableElement
 from ..packaging import PackageManager, UnknownFileError, UnknownPackageError
 from ..parser.doxygen import safe_language_tag
-from ..path_utils import relative_path
 from ..transcoder import TranscoderBase
 from .context import Context, stacktrace
 from .errors import (
@@ -709,6 +708,7 @@ class Api(ABC):
 
     def _sub_api(self, document: Document, embedded: bool = False) -> "Api":
         sub_context = self._context.sub_context()
+        sub_context.current_document = document
         sub_context.current_package = document.package
 
         if embedded:
@@ -750,6 +750,7 @@ class Api(ABC):
 class PreprocessingApi(Api):
     def _sub_api(self, document: Document, embedded: bool = False) -> "Api":
         sub_context = self._context.sub_context()
+        sub_context.current_document = document
         sub_context.current_package = document.package
 
         # TODO: Unit test: document tree is correctly constructed
@@ -901,10 +902,9 @@ class GeneratingApi(Api):
 
     @_api_stackframe(name="link", show_args=("link_text", ), internal=True)
     def link_to_element(self, element_id: str, link_text: str) -> str:
-        containing_file = self._context.file_with_element(element_id)
-        if containing_file is not None:
-            rel_path = relative_path(self._context.current_document_node.in_file, containing_file)
-            file_part = f"{rel_path}#"
+        containing_doc = self._context.file_with_element(element_id)
+        if containing_doc is not None:
+            file_part = f"{self._document.relative_path_to(containing_doc)}#"
         else:
             file_part = ""
 
@@ -1000,18 +1000,16 @@ def process_adoc(doc: Document,
     """
 
     # TODO: Merge DocumentTreeNode into Document
+    doc.is_root = True
     context = Context(reference=api_reference,
                       package_manager=package_manager,
+                      current_document=doc,
                       current_document_node=DocumentTreeNode(doc.work_file, None),
                       current_package=package_manager.input_package())
 
     context.warnings_are_errors = warnings_are_errors
     context.multipage = multipage
     context.progress = progress
-
-    # TODO: Improve
-    doc = context.find_document(None, doc.relative_path)
-    doc.is_root = True
 
     PreprocessingApi(context, doc).process_adoc()
     _check_links(context)

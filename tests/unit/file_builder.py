@@ -101,6 +101,7 @@ class FileBuilder:
 
         c = Context(reference=ApiReference(),
                     package_manager=self.package_manager,
+                    current_document=self.input_doc,
                     current_document_node=DocumentTreeNode(self.input_doc.work_file, parent_node),
                     current_package=self.package_manager.input_package())
 

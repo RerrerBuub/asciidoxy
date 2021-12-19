@@ -1431,8 +1431,8 @@ def test_context_link_to_element_singlepage(context, generating_api):
     element_id = "element"
     file_containing_element = "other_file.adoc"
     link_text = "Link"
-    context.inserted[element_id] = (context.current_document_node.in_file.parent /
-                                    file_containing_element, [])
+    context.inserted[element_id] = (
+        context.current_document.with_relative_path(file_containing_element), [])
     assert generating_api.link_to_element(element_id,
                                           link_text) == f"xref:{element_id}[++{link_text}++]"
 
@@ -1441,8 +1441,8 @@ def test_context_link_to_element_multipage(context, multipage, generating_api):
     element_id = "element"
     file_containing_element = "other_file.adoc"
     link_text = "Link"
-    context.inserted[element_id] = (context.current_document_node.in_file.parent /
-                                    file_containing_element, [])
+    context.inserted[element_id] = (
+        context.current_document.with_relative_path(file_containing_element), [])
     assert (generating_api.link_to_element(
         element_id, link_text) == f"xref:{file_containing_element}#{element_id}[++{link_text}++]")
 
@@ -1451,7 +1451,7 @@ def test_context_link_to_element_multipage_element_in_the_same_document(
         context, multipage, generating_api):
     element_id = "element"
     link_text = "Link"
-    context.inserted[element_id] = (context.current_document_node.in_file, [])
+    context.inserted[element_id] = (context.current_document, [])
     assert (generating_api.link_to_element(element_id,
                                            link_text) == f"xref:{element_id}[++{link_text}++]")
 
