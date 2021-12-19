@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from asciidoxy.api_reference import ApiReference
+from asciidoxy.document import Document
 from asciidoxy.generator.asciidoc import GeneratingApi, PreprocessingApi
 from asciidoxy.generator.context import Context
 from asciidoxy.generator.navigation import DocumentTreeNode
@@ -26,6 +27,7 @@ from asciidoxy.packaging import Package, PackageManager
 from asciidoxy.parser.doxygen import Driver as ParserDriver
 
 from .builders import SimpleClassBuilder
+from .file_builder import FileBuilder
 
 _test_data_dir = Path(__file__).parent.parent / "data"
 _xml_dir = _test_data_dir / "generated" / "xml"
@@ -90,22 +92,48 @@ def build_dir(tmp_path):
 
 @pytest.fixture
 def package_manager(build_dir):
-    return PackageManager(build_dir)
+    mgr = PackageManager(build_dir)
+    mgr.work_dir.mkdir(parents=True, exist_ok=True)
+    return mgr
+
+
+@pytest.fixture
+def original_dir(tmp_path):
+    d = tmp_path / "original"
+    d.mkdir(parents=True)
+    return d
+
+
+@pytest.fixture
+def original_file(original_dir, package_manager):
+    f = original_dir / "input_file.adoc"
+    f.touch()
+    package_manager.set_input_files(f, include_dir=original_dir)
+    return f
 
 
 @pytest.fixture
 def work_dir(package_manager):
-    wd = package_manager.work_dir
-    wd.mkdir(parents=True, exist_ok=True)
-    return wd
+    return package_manager.work_dir
 
 
 @pytest.fixture
-def input_file(work_dir, package_manager):
+def work_file(original_file, work_dir):
     f = work_dir / "input_file.adoc"
     f.touch()
-    package_manager.set_input_files(f, include_dir=work_dir)
     return f
+
+
+@pytest.fixture
+def input_file(work_file):
+    # TODO: remove
+    return work_file
+
+
+@pytest.fixture
+def document(package_manager, input_file, work_file):
+    return Document(Path("input_file.adoc"), package_manager.input_package(),
+                    package_manager.work_dir)
 
 
 @pytest.fixture
@@ -136,22 +164,21 @@ def api_reference(parser_driver_factory, api_reference_set, forced_language):
 
 @pytest.fixture
 def context(input_file, api_reference, package_manager):
-    c = Context(base_dir=input_file.parent,
-                reference=api_reference,
+    c = Context(reference=api_reference,
                 package_manager=package_manager,
-                current_document=DocumentTreeNode(input_file),
-                current_package=Package(PackageManager.INPUT_FILES))
+                current_document_node=DocumentTreeNode(input_file),
+                current_package=Package(Package.INPUT_PACKAGE_NAME))
     return c
 
 
 @pytest.fixture
-def preprocessing_api(input_file, context):
-    return PreprocessingApi(input_file, context)
+def preprocessing_api(document, context):
+    return PreprocessingApi(context, document)
 
 
 @pytest.fixture
-def generating_api(input_file, context):
-    return GeneratingApi(input_file, context)
+def generating_api(document, context):
+    return GeneratingApi(context, document)
 
 
 @pytest.fixture
@@ -222,21 +249,25 @@ def single_and_multipage(request, context):
 
 @pytest.fixture
 def empty_context(input_file, package_manager):
-    return Context(base_dir=input_file.parent,
-                   reference=ApiReference(),
+    return Context(reference=ApiReference(),
                    package_manager=package_manager,
-                   current_document=DocumentTreeNode(input_file),
-                   current_package=Package(PackageManager.INPUT_FILES))
+                   current_document_node=DocumentTreeNode(input_file),
+                   current_package=Package(Package.INPUT_PACKAGE_NAME))
 
 
 @pytest.fixture
-def empty_preprocessing_api(input_file, empty_context):
-    return PreprocessingApi(input_file, empty_context)
+def empty_preprocessing_api(document, empty_context):
+    return PreprocessingApi(empty_context, document)
 
 
 @pytest.fixture
-def empty_generating_api(input_file, empty_context):
-    return GeneratingApi(input_file, empty_context)
+def empty_generating_api(document, empty_context):
+    return GeneratingApi(empty_context, document)
+
+
+@pytest.fixture
+def file_builder(tmp_path, build_dir):
+    return FileBuilder(tmp_path, build_dir)
 
 
 _custom_types = {

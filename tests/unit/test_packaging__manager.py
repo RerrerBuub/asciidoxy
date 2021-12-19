@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, call
 import pytest
 import toml
 
+from asciidoxy.document import Package
 from asciidoxy.packaging.manager import (
     FileCollisionError,
     PackageManager,
@@ -161,21 +162,22 @@ def test_prepare_work_directory(package_manager, event_loop, tmp_path, build_dir
     (src_dir / "other" / "another.adoc").touch()
 
     package_manager.set_input_files(in_file, src_dir)
-    work_file = package_manager.prepare_work_directory(in_file)
-    assert work_file.is_file()
-    assert work_file.name == "index.adoc"
-    work_dir = work_file.parent
+    doc = package_manager.prepare_work_directory(in_file)
+    assert doc.work_file.is_file()
+    assert doc.work_file.name == "index.adoc"
+    assert doc.package is not None
+    assert doc.package.is_input_package is True
 
-    assert (work_dir / "index.adoc").is_file()
-    assert (work_dir / "chapter.adoc").is_file()
-    assert (work_dir / "other").is_dir()
-    assert (work_dir / "other" / "another.adoc").is_file()
+    assert (doc.work_dir / "index.adoc").is_file()
+    assert (doc.work_dir / "chapter.adoc").is_file()
+    assert (doc.work_dir / "other").is_dir()
+    assert (doc.work_dir / "other" / "another.adoc").is_file()
 
-    assert (work_dir / "a.adoc").is_file()
-    assert (work_dir / "b.adoc").is_file()
-    assert (work_dir / "images").is_dir()
-    assert (work_dir / "images" / "a.png").is_file()
-    assert (work_dir / "images" / "b.png").is_file()
+    assert (doc.work_dir / "a.adoc").is_file()
+    assert (doc.work_dir / "b.adoc").is_file()
+    assert (doc.work_dir / "images").is_dir()
+    assert (doc.work_dir / "images" / "a.png").is_file()
+    assert (doc.work_dir / "images" / "b.png").is_file()
 
 
 def test_prepare_work_directory__no_include_dir(package_manager, event_loop, tmp_path, build_dir):
@@ -193,21 +195,22 @@ def test_prepare_work_directory__no_include_dir(package_manager, event_loop, tmp
     (src_dir / "other" / "another.adoc").touch()
 
     package_manager.set_input_files(in_file)
-    work_file = package_manager.prepare_work_directory(in_file)
-    assert work_file.is_file()
-    assert work_file.name == "index.adoc"
-    work_dir = work_file.parent
+    doc = package_manager.prepare_work_directory(in_file)
+    assert doc.work_file.is_file()
+    assert doc.work_file.name == "index.adoc"
+    assert doc.package is not None
+    assert doc.package.is_input_package is True
 
-    assert (work_dir / "index.adoc").is_file()
-    assert not (work_dir / "chapter.adoc").is_file()
-    assert not (work_dir / "other").is_dir()
-    assert not (work_dir / "other" / "another.adoc").is_file()
+    assert (doc.work_dir / "index.adoc").is_file()
+    assert not (doc.work_dir / "chapter.adoc").is_file()
+    assert not (doc.work_dir / "other").is_dir()
+    assert not (doc.work_dir / "other" / "another.adoc").is_file()
 
-    assert (work_dir / "a.adoc").is_file()
-    assert (work_dir / "b.adoc").is_file()
-    assert (work_dir / "images").is_dir()
-    assert (work_dir / "images" / "a.png").is_file()
-    assert (work_dir / "images" / "b.png").is_file()
+    assert (doc.work_dir / "a.adoc").is_file()
+    assert (doc.work_dir / "b.adoc").is_file()
+    assert (doc.work_dir / "images").is_dir()
+    assert (doc.work_dir / "images" / "a.png").is_file()
+    assert (doc.work_dir / "images" / "b.png").is_file()
 
 
 def test_prepare_work_directory__explicit_images(package_manager, event_loop, tmp_path, build_dir):
@@ -229,23 +232,24 @@ def test_prepare_work_directory__explicit_images(package_manager, event_loop, tm
     (image_dir / "image.png").touch()
 
     package_manager.set_input_files(in_file, None, image_dir)
-    work_file = package_manager.prepare_work_directory(in_file)
-    assert work_file.is_file()
-    assert work_file.name == "index.adoc"
-    work_dir = work_file.parent
+    doc = package_manager.prepare_work_directory(in_file)
+    assert doc.work_file.is_file()
+    assert doc.work_file.name == "index.adoc"
+    assert doc.package is not None
+    assert doc.package.is_input_package is True
 
-    assert (work_dir / "index.adoc").is_file()
-    assert not (work_dir / "chapter.adoc").is_file()
-    assert not (work_dir / "other").is_dir()
-    assert not (work_dir / "other" / "another.adoc").is_file()
+    assert (doc.work_dir / "index.adoc").is_file()
+    assert not (doc.work_dir / "chapter.adoc").is_file()
+    assert not (doc.work_dir / "other").is_dir()
+    assert not (doc.work_dir / "other" / "another.adoc").is_file()
 
-    assert (work_dir / "images").is_dir()
-    assert (work_dir / "images" / "image.png").is_file()
+    assert (doc.work_dir / "images").is_dir()
+    assert (doc.work_dir / "images" / "image.png").is_file()
 
-    assert (work_dir / "a.adoc").is_file()
-    assert (work_dir / "b.adoc").is_file()
-    assert (work_dir / "images" / "a.png").is_file()
-    assert (work_dir / "images" / "b.png").is_file()
+    assert (doc.work_dir / "a.adoc").is_file()
+    assert (doc.work_dir / "b.adoc").is_file()
+    assert (doc.work_dir / "images" / "a.png").is_file()
+    assert (doc.work_dir / "images" / "b.png").is_file()
 
 
 def test_prepare_work_directory__implicit_images(package_manager, event_loop, tmp_path, build_dir):
@@ -267,23 +271,24 @@ def test_prepare_work_directory__implicit_images(package_manager, event_loop, tm
     (image_dir / "image.png").touch()
 
     package_manager.set_input_files(in_file, None, None)
-    work_file = package_manager.prepare_work_directory(in_file)
-    assert work_file.is_file()
-    assert work_file.name == "index.adoc"
-    work_dir = work_file.parent
+    doc = package_manager.prepare_work_directory(in_file)
+    assert doc.work_file.is_file()
+    assert doc.work_file.name == "index.adoc"
+    assert doc.package is not None
+    assert doc.package.is_input_package is True
 
-    assert (work_dir / "index.adoc").is_file()
-    assert not (work_dir / "chapter.adoc").is_file()
-    assert not (work_dir / "other").is_dir()
-    assert not (work_dir / "other" / "another.adoc").is_file()
+    assert (doc.work_dir / "index.adoc").is_file()
+    assert not (doc.work_dir / "chapter.adoc").is_file()
+    assert not (doc.work_dir / "other").is_dir()
+    assert not (doc.work_dir / "other" / "another.adoc").is_file()
 
-    assert (work_dir / "images").is_dir()
-    assert (work_dir / "images" / "image.png").is_file()
+    assert (doc.work_dir / "images").is_dir()
+    assert (doc.work_dir / "images" / "image.png").is_file()
 
-    assert (work_dir / "a.adoc").is_file()
-    assert (work_dir / "b.adoc").is_file()
-    assert (work_dir / "images" / "a.png").is_file()
-    assert (work_dir / "images" / "b.png").is_file()
+    assert (doc.work_dir / "a.adoc").is_file()
+    assert (doc.work_dir / "b.adoc").is_file()
+    assert (doc.work_dir / "images" / "a.png").is_file()
+    assert (doc.work_dir / "images" / "b.png").is_file()
 
 
 def test_prepare_work_directory__file_collision(package_manager, event_loop, tmp_path, build_dir,
@@ -390,15 +395,16 @@ def test_prepare_work_directory__same_dir_in_multiple_packages(package_manager, 
     (pkg_b_dir / "adoc" / "other" / "b_another.adoc").touch()
 
     package_manager.set_input_files(in_file, src_dir)
-    work_file = package_manager.prepare_work_directory(in_file)
-    assert work_file.is_file()
-    assert work_file.name == "index.adoc"
-    work_dir = work_file.parent
+    doc = package_manager.prepare_work_directory(in_file)
+    assert doc.work_file.is_file()
+    assert doc.work_file.name == "index.adoc"
+    assert doc.package is not None
+    assert doc.package.is_input_package is True
 
-    assert (work_dir / "other").is_dir()
-    assert (work_dir / "other" / "another.adoc").is_file()
-    assert (work_dir / "other" / "a_another.adoc").is_file()
-    assert (work_dir / "other" / "b_another.adoc").is_file()
+    assert (doc.work_dir / "other").is_dir()
+    assert (doc.work_dir / "other" / "another.adoc").is_file()
+    assert (doc.work_dir / "other" / "a_another.adoc").is_file()
+    assert (doc.work_dir / "other" / "b_another.adoc").is_file()
 
 
 def test_make_image_directory(package_manager, event_loop, tmp_path, build_dir):
@@ -509,10 +515,11 @@ def test_file_in_work_directory__present(package_manager, event_loop, tmp_path, 
     in_file = src_dir / "index.adoc"
     in_file.touch()
     package_manager.set_input_files(in_file)
-    work_file = package_manager.prepare_work_directory(in_file)
-    work_dir = work_file.parent
+    doc = package_manager.prepare_work_directory(in_file)
+    work_dir = doc.work_dir
 
-    assert package_manager.file_in_work_directory("INPUT", "index.adoc") == work_dir / "index.adoc"
+    assert package_manager.file_in_work_directory(Package.INPUT_PACKAGE_NAME,
+                                                  "index.adoc") == work_dir / "index.adoc"
     assert package_manager.file_in_work_directory("a", "a.adoc") == work_dir / "a.adoc"
     assert package_manager.file_in_work_directory("b", "b.adoc") == work_dir / "b.adoc"
 
@@ -524,10 +531,11 @@ def test_file_in_work_directory__input_file_no_include_dir(package_manager, even
     in_file = src_dir / "index.adoc"
     in_file.touch()
     package_manager.set_input_files(in_file)
-    work_file = package_manager.prepare_work_directory(in_file)
-    work_dir = work_file.parent
+    doc = package_manager.prepare_work_directory(in_file)
+    work_dir = doc.work_dir
 
-    assert package_manager.file_in_work_directory("INPUT", "index.adoc") == work_dir / "index.adoc"
+    assert package_manager.file_in_work_directory(Package.INPUT_PACKAGE_NAME,
+                                                  "index.adoc") == work_dir / "index.adoc"
 
 
 def test_file_in_work_directory__file_from_input_include_dir(package_manager, event_loop, tmp_path,
@@ -540,14 +548,15 @@ def test_file_in_work_directory__file_from_input_include_dir(package_manager, ev
     (src_dir / "other").mkdir()
     (src_dir / "other" / "another.adoc").touch()
     package_manager.set_input_files(in_file, in_file.parent)
-    work_file = package_manager.prepare_work_directory(in_file)
-    work_dir = work_file.parent
+    doc = package_manager.prepare_work_directory(in_file)
+    work_dir = doc.work_dir
 
-    assert package_manager.file_in_work_directory("INPUT", "index.adoc") == work_dir / "index.adoc"
-    assert package_manager.file_in_work_directory("INPUT",
+    assert package_manager.file_in_work_directory(Package.INPUT_PACKAGE_NAME,
+                                                  "index.adoc") == work_dir / "index.adoc"
+    assert package_manager.file_in_work_directory(Package.INPUT_PACKAGE_NAME,
                                                   "chapter.adoc") == work_dir / "chapter.adoc"
     assert package_manager.file_in_work_directory(
-        "INPUT", "other/another.adoc") == work_dir / "other" / "another.adoc"
+        Package.INPUT_PACKAGE_NAME, "other/another.adoc") == work_dir / "other" / "another.adoc"
 
 
 def test_file_in_work_directory__default_root_doc(package_manager, event_loop, tmp_path, build_dir):
@@ -559,8 +568,8 @@ def test_file_in_work_directory__default_root_doc(package_manager, event_loop, t
     src_dir.mkdir()
     in_file = src_dir / "index.adoc"
     in_file.touch()
-    work_file = package_manager.prepare_work_directory(in_file)
-    work_dir = work_file.parent
+    doc = package_manager.prepare_work_directory(in_file)
+    work_dir = doc.work_dir
 
     assert package_manager.file_in_work_directory("a", None) == work_dir / "a.adoc"
     assert package_manager.file_in_work_directory("a", "") == work_dir / "a.adoc"
@@ -652,7 +661,7 @@ def test_file_in_work_directory__package_without_include_files(package_manager, 
         package_manager.file_in_work_directory("a", "a.adoc")
 
 
-@pytest.mark.parametrize("package_hint", [None, "", "a", "b", "INPUT"])
+@pytest.mark.parametrize("package_hint", [None, "", "a", "b", Package.INPUT_PACKAGE_NAME])
 def test_find_original_file__with_include_dir(package_hint, package_manager, event_loop, tmp_path,
                                               build_dir):
     create_package_dir(tmp_path, "a")
@@ -672,21 +681,21 @@ def test_find_original_file__with_include_dir(package_hint, package_manager, eve
     package_manager.prepare_work_directory(in_file)
 
     assert package_manager.find_original_file(
-        package_manager.file_in_work_directory("INPUT", "index.adoc"),
-        package_hint) == ("INPUT", Path("index.adoc"))
+        package_manager.file_in_work_directory(Package.INPUT_PACKAGE_NAME, "index.adoc"),
+        package_hint) == (Package.INPUT_PACKAGE_NAME, Path("index.adoc"))
     assert package_manager.find_original_file(
-        package_manager.file_in_work_directory("INPUT", "chapter.adoc"),
-        package_hint) == ("INPUT", Path("chapter.adoc"))
+        package_manager.file_in_work_directory(Package.INPUT_PACKAGE_NAME, "chapter.adoc"),
+        package_hint) == (Package.INPUT_PACKAGE_NAME, Path("chapter.adoc"))
     assert package_manager.find_original_file(
-        package_manager.file_in_work_directory("INPUT", "other/another.adoc"),
-        package_hint) == ("INPUT", Path("other/another.adoc"))
+        package_manager.file_in_work_directory(Package.INPUT_PACKAGE_NAME, "other/another.adoc"),
+        package_hint) == (Package.INPUT_PACKAGE_NAME, Path("other/another.adoc"))
     assert package_manager.find_original_file(package_manager.file_in_work_directory("a", "a.adoc"),
                                               package_hint) == ("a", Path("a.adoc"))
     assert package_manager.find_original_file(package_manager.file_in_work_directory("b", "b.adoc"),
                                               package_hint) == ("b", Path("b.adoc"))
 
 
-@pytest.mark.parametrize("package_hint", [None, "", "a", "b", "INPUT"])
+@pytest.mark.parametrize("package_hint", [None, "", "a", "b", Package.INPUT_PACKAGE_NAME])
 def test_find_original_file__without_include_dir(package_hint, package_manager, event_loop,
                                                  tmp_path, build_dir):
     create_package_dir(tmp_path, "a")
@@ -703,9 +712,139 @@ def test_find_original_file__without_include_dir(package_hint, package_manager, 
     package_manager.prepare_work_directory(in_file)
 
     assert package_manager.find_original_file(
-        package_manager.file_in_work_directory("INPUT", "index.adoc"),
-        package_hint) == ("INPUT", Path("index.adoc"))
+        package_manager.file_in_work_directory(Package.INPUT_PACKAGE_NAME, "index.adoc"),
+        package_hint) == (Package.INPUT_PACKAGE_NAME, Path("index.adoc"))
     assert package_manager.find_original_file(package_manager.file_in_work_directory("a", "a.adoc"),
                                               package_hint) == ("a", Path("a.adoc"))
     assert package_manager.find_original_file(package_manager.file_in_work_directory("b", "b.adoc"),
                                               package_hint) == ("b", Path("b.adoc"))
+
+
+def test_make_document__input_dir(package_manager, event_loop, tmp_path, build_dir):
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    in_file = src_dir / "index.adoc"
+    in_file.touch()
+
+    package_manager.set_input_files(in_file)
+    package_manager.prepare_work_directory(in_file)
+
+    doc = package_manager.make_document(file_name="index.adoc")
+    assert doc is not None
+    assert doc.relative_path == Path("index.adoc")
+    assert doc.package is not None
+    assert doc.package.is_input_package is True
+
+
+def test_make_document__input_dir__unknown_file(package_manager, event_loop, tmp_path, build_dir):
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    in_file = src_dir / "index.adoc"
+    in_file.touch()
+
+    package_manager.set_input_files(in_file)
+    package_manager.prepare_work_directory(in_file)
+
+    with pytest.raises(UnknownFileError):
+        package_manager.make_document(file_name="unknown.adoc")
+
+
+def test_make_document__input_file(package_manager, event_loop, tmp_path, build_dir):
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    in_file = src_dir / "index.adoc"
+    in_file.touch()
+
+    package_manager.set_input_files(in_file)
+    package_manager.prepare_work_directory(in_file)
+
+    doc = package_manager.make_document()
+    assert doc is not None
+    assert doc.relative_path == Path("index.adoc")
+    assert doc.package is not None
+    assert doc.package.is_input_package is True
+
+
+def test_make_document__package_file(package_manager, event_loop, tmp_path, build_dir):
+    create_package_dir(tmp_path, "a")
+    create_package_dir(tmp_path, "b")
+    spec_file = create_package_spec(tmp_path, "a", "b")
+    package_manager.collect(spec_file)
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    in_file = src_dir / "index.adoc"
+    in_file.touch()
+
+    package_manager.set_input_files(in_file)
+    package_manager.prepare_work_directory(in_file)
+
+    doc = package_manager.make_document(package_name="a", file_name="a.adoc")
+    assert doc is not None
+    assert doc.relative_path == Path("a.adoc")
+    assert doc.package is not None
+    assert doc.package.name == "a"
+
+    doc = package_manager.make_document(package_name="b", file_name="b.adoc")
+    assert doc is not None
+    assert doc.relative_path == Path("b.adoc")
+    assert doc.package is not None
+    assert doc.package.name == "b"
+
+
+def test_make_document__unknown_package(package_manager, event_loop, tmp_path, build_dir):
+    create_package_dir(tmp_path, "a")
+    create_package_dir(tmp_path, "b")
+    spec_file = create_package_spec(tmp_path, "a", "b")
+    package_manager.collect(spec_file)
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    in_file = src_dir / "index.adoc"
+    in_file.touch()
+
+    package_manager.set_input_files(in_file)
+    package_manager.prepare_work_directory(in_file)
+
+    with pytest.raises(UnknownPackageError):
+        package_manager.make_document(package_name="c", file_name="a.adoc")
+
+
+def test_make_document__unknown_package_file(package_manager, event_loop, tmp_path, build_dir):
+    create_package_dir(tmp_path, "a")
+    create_package_dir(tmp_path, "b")
+    spec_file = create_package_spec(tmp_path, "a", "b")
+    package_manager.collect(spec_file)
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    in_file = src_dir / "index.adoc"
+    in_file.touch()
+
+    package_manager.set_input_files(in_file)
+    package_manager.prepare_work_directory(in_file)
+
+    with pytest.raises(UnknownFileError):
+        package_manager.make_document(package_name="a", file_name="c.adoc")
+    with pytest.raises(UnknownFileError):
+        package_manager.make_document(package_name="b", file_name="c.adoc")
+
+
+def test_make_document__wrong_package_file(package_manager, event_loop, tmp_path, build_dir):
+    create_package_dir(tmp_path, "a")
+    create_package_dir(tmp_path, "b")
+    spec_file = create_package_spec(tmp_path, "a", "b")
+    package_manager.collect(spec_file)
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    in_file = src_dir / "index.adoc"
+    in_file.touch()
+
+    package_manager.set_input_files(in_file)
+    package_manager.prepare_work_directory(in_file)
+
+    with pytest.raises(UnknownFileError):
+        package_manager.make_document(package_name="a", file_name="b.adoc")
+    with pytest.raises(UnknownFileError):
+        package_manager.make_document(package_name="b", file_name="a.adoc")

@@ -17,14 +17,12 @@ Tests for the `asciidoxy.generator.asciidoc`.
 
 import os
 from pathlib import Path
-from typing import Optional
 
 import pytest
 
 from asciidoxy import __version__
-from asciidoxy.api_reference import ApiReference
 from asciidoxy.generator.asciidoc import ApiProxy, GeneratingApi, PreprocessingApi, process_adoc
-from asciidoxy.generator.context import Context, StackFrame
+from asciidoxy.generator.context import StackFrame
 from asciidoxy.generator.errors import (
     AmbiguousReferenceError,
     ConsistencyError,
@@ -37,123 +35,25 @@ from asciidoxy.generator.errors import (
     TemplateMissingError,
     UnknownAnchorError,
 )
-from asciidoxy.generator.navigation import DocumentTreeNode
-from asciidoxy.packaging import Package, PackageManager
+from asciidoxy.packaging import Package
 
 from .shared import ProgressMock
 
 
-class _TestDataBuilder:
-    def __init__(self, base_dir: Path, build_dir: Path):
-        self.package_manager = PackageManager(build_dir)
-
-        self.packages_dir = base_dir / "packages"
-        self.packages_dir.mkdir(parents=True, exist_ok=True)
-
-        self.input_dir = self.packages_dir / "INPUT"
-        self.input_dir.mkdir(parents=True, exist_ok=True)
-
-        self.work_dir = self.package_manager.work_dir
-        self.work_dir.mkdir(parents=True, exist_ok=True)
-
-        self.input_file = None
-        self.parent_file = None
-
-        self.adoc_files_to_register = []
-        self.multipage = False
-        self.warnings_are_errors = False
-
-    def add_input_file(self, name: str, register: bool = True):
-        self.input_file = self.add_include_file(name, register)
-        self.package_manager.set_input_files(self.input_file, self.input_dir)
-        return self.input_file
-
-    def add_input_parent_file(self, name: str, register: bool = True):
-        self.parent_file = self.add_include_file(name, register)
-        return self.parent_file
-
-    def add_include_file(self, name: str, register: bool = True):
-        return self.add_file("INPUT", name, register)
-
-    def add_package_file(self, package: str, name: str, register: bool = True):
-        self.add_package(package)
-        return self.add_file(package, name, register)
-
-    def add_package_default_file(self, package: str, name: str, register: bool = True):
-        self.add_package(package, name)
-        return self.add_file(package, name, register)
-
-    def add_file(self, package: str, name: str, register: bool = True):
-        input_file = self.packages_dir / package / name
-        input_file.parent.mkdir(parents=True, exist_ok=True)
-        input_file.touch()
-
-        work_file = self.work_dir / name
-        work_file.parent.mkdir(parents=True, exist_ok=True)
-        work_file.touch()
-
-        if register:
-            self.adoc_files_to_register.append(work_file)
-
-        return work_file
-
-    def add_package(self, package: str, default_file: Optional[str] = None):
-        if package not in self.package_manager.packages:
-            pkg = Package(package)
-            pkg.adoc_src_dir = self.packages_dir / package
-            if default_file:
-                pkg.adoc_root_doc = pkg.adoc_src_dir / default_file
-            pkg.scoped = True
-            self.package_manager.packages[package] = pkg
-
-    def context(self):
-        if self.parent_file:
-            parent_node = DocumentTreeNode(self.parent_file)
-        else:
-            parent_node = None
-
-        c = Context(base_dir=self.work_dir,
-                    reference=ApiReference(),
-                    package_manager=self.package_manager,
-                    current_document=DocumentTreeNode(self.input_file, parent_node),
-                    current_package=self.package_manager.input_package())
-
-        for file in self.adoc_files_to_register:
-            c.register_adoc_file(file)
-        c.current_document.children = [
-            DocumentTreeNode(f, c.current_document) for f in self.adoc_files_to_register
-        ]
-
-        c.multipage = self.multipage
-        c.warnings_are_errors = self.warnings_are_errors
-
-        return c
-
-    def apis(self):
-        context = self.context()
-        yield PreprocessingApi(self.input_file, context)
-        yield GeneratingApi(self.input_file, context)
-
-
-@pytest.fixture
-def test_data_builder(tmp_path, build_dir):
-    return _TestDataBuilder(tmp_path, build_dir)
-
-
 @pytest.fixture(params=[True, False], ids=["multi-page", "single-page"])
-def tdb_single_and_multipage(request, test_data_builder):
-    test_data_builder.multipage = request.param
+def tdb_single_and_multipage(request, file_builder):
+    file_builder.multipage = request.param
     return request.param
 
 
 @pytest.fixture(params=[True, False], ids=["warnings-are-errors", "warnings-are-not-errors"])
-def tdb_warnings_are_and_are_not_errors(request, test_data_builder):
-    test_data_builder.warnings_are_errors = request.param
+def tdb_warnings_are_and_are_not_errors(request, file_builder):
+    file_builder.warnings_are_errors = request.param
     return request.param
 
 
 @pytest.fixture
-def adoc_data_work_file(adoc_data, package_manager):
+def adoc_data_document(adoc_data, package_manager):
     def prepare(adoc_file):
         package_manager.set_input_files(adoc_data / adoc_file, adoc_data)
         return package_manager.prepare_work_directory(adoc_data / adoc_file)
@@ -343,9 +243,12 @@ def test_link_stores_stack_trace(preprocessing_api, context, input_file):
     assert traces == [[
         StackFrame("link('asciidoxy::geometry::Coordinate')",
                    file=rel_input_file,
-                   package="INPUT",
+                   package=Package.INPUT_PACKAGE_NAME,
                    internal=False),
-        StackFrame("link('Coordinate')", file=None, package="INPUT", internal=True)
+        StackFrame("link('Coordinate')",
+                   file=None,
+                   package=Package.INPUT_PACKAGE_NAME,
+                   internal=True)
     ]]
 
 
@@ -360,109 +263,109 @@ def test_link_stores_stack_trace_nested_insert(preprocessing_api, context, input
         [
             StackFrame(command="insert('asciidoxy::positioning::Positioning')",
                        file=rel_input_file,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=False),
             StackFrame(command="insert('asciidoxy::positioning::Positioning')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True),
             StackFrame(command="insert('asciidoxy::positioning::Positioning::CurrentPosition')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True),
             StackFrame(command="link('asciidoxy::geometry::Coordinate')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True)
         ],
         [
             StackFrame(command="insert('asciidoxy::positioning::Positioning')",
                        file=rel_input_file,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=False),
             StackFrame(command="insert('asciidoxy::positioning::Positioning')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True),
             StackFrame(command="insert('asciidoxy::positioning::Positioning::CurrentPosition')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True),
             StackFrame(command="link('asciidoxy::geometry::Coordinate')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True)
         ],
         [
             StackFrame(command="insert('asciidoxy::positioning::Positioning')",
                        file=rel_input_file,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=False),
             StackFrame(command="insert('asciidoxy::positioning::Positioning')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True),
             StackFrame(command="insert('asciidoxy::positioning::Positioning::IsNearby')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True),
             StackFrame(command="link('asciidoxy::geometry::Coordinate')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True)
         ],
         [
             StackFrame(command="insert('asciidoxy::positioning::Positioning')",
                        file=rel_input_file,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=False),
             StackFrame(command="insert('asciidoxy::positioning::Positioning')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True),
             StackFrame(command="insert('asciidoxy::positioning::Positioning::IsNearby')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True),
             StackFrame(command="link('asciidoxy::geometry::Coordinate')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True)
         ],
         [
             StackFrame(command="insert('asciidoxy::positioning::Positioning')",
                        file=rel_input_file,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=False),
             StackFrame(command="insert('asciidoxy::positioning::Positioning')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True),
             StackFrame(command="insert('asciidoxy::positioning::Positioning::Override')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True),
             StackFrame(command="link('asciidoxy::geometry::Coordinate')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True)
         ],
         [
             StackFrame(command="insert('asciidoxy::positioning::Positioning')",
                        file=rel_input_file,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=False),
             StackFrame(command="insert('asciidoxy::positioning::Positioning')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True),
             StackFrame(command="insert('asciidoxy::positioning::Positioning::Override')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True),
             StackFrame(command="link('asciidoxy::geometry::Coordinate')",
                        file=None,
-                       package="INPUT",
+                       package=Package.INPUT_PACKAGE_NAME,
                        internal=True)
         ]
     ]
@@ -470,46 +373,66 @@ def test_link_stores_stack_trace_nested_insert(preprocessing_api, context, input
 
 @pytest.mark.parametrize("api_reference_set", [("cpp/default", "cpp/consumer")])
 def test_link_in_include_stores_stack_trace_with_correct_file(preprocessing_api, context,
-                                                              input_file):
-    include_file = input_file.parent / "include.adoc"
+                                                              original_file, work_file):
+    # TODO: Update when changing how input files are read
+    (original_file.parent / "include.adoc").touch()
+    include_file = work_file.parent / "include.adoc"
     include_file.write_text("""${link("asciidoxy::geometry::Coordinate")}""")
     preprocessing_api.include(include_file.name)
 
     assert "cpp-classasciidoxy_1_1geometry_1_1_coordinate" in context.linked
     traces = context.linked["cpp-classasciidoxy_1_1geometry_1_1_coordinate"]
 
-    rel_input_file = input_file.relative_to(context.package_manager.work_dir)
+    rel_work_file = work_file.relative_to(context.package_manager.work_dir)
     rel_include_file = include_file.relative_to(context.package_manager.work_dir)
     assert traces == [[
-        StackFrame("include('include.adoc')", file=rel_input_file, package="INPUT", internal=False),
+        StackFrame("include('include.adoc')",
+                   file=rel_work_file,
+                   package=Package.INPUT_PACKAGE_NAME,
+                   internal=False),
         StackFrame("link('asciidoxy::geometry::Coordinate')",
                    file=rel_include_file,
-                   package="INPUT",
+                   package=Package.INPUT_PACKAGE_NAME,
                    internal=False),
-        StackFrame("link('Coordinate')", file=None, package="INPUT", internal=True)
+        StackFrame("link('Coordinate')",
+                   file=None,
+                   package=Package.INPUT_PACKAGE_NAME,
+                   internal=True)
     ]]
 
 
 @pytest.mark.parametrize("api_reference_set", [("cpp/default", "cpp/consumer")])
-def test_link_from_proxy_stores_stack_trace_with_proxy_name(preprocessing_api, context, input_file):
-    include_file = input_file.parent / "include.adoc"
+def test_link_from_proxy_stores_stack_trace_with_proxy_name(preprocessing_api, context,
+                                                            original_file, work_file):
+    # TODO: Update when changing how input files are read
+    (original_file.parent / "include.adoc").touch()
+    include_file = work_file.parent / "include.adoc"
     include_file.write_text("""${api.link_class("asciidoxy::geometry::Coordinate")}""")
     preprocessing_api.include(include_file.name)
 
     assert "cpp-classasciidoxy_1_1geometry_1_1_coordinate" in context.linked
     traces = context.linked["cpp-classasciidoxy_1_1geometry_1_1_coordinate"]
 
-    rel_input_file = input_file.relative_to(context.package_manager.work_dir)
+    rel_work_file = work_file.relative_to(context.package_manager.work_dir)
     rel_include_file = include_file.relative_to(context.package_manager.work_dir)
     assert traces == [[
-        StackFrame("include('include.adoc')", file=rel_input_file, package="INPUT", internal=False),
+        StackFrame("include('include.adoc')",
+                   file=rel_work_file,
+                   package=Package.INPUT_PACKAGE_NAME,
+                   internal=False),
         # Cannot reliably get parameters for proxy class
-        StackFrame("api.link_class()", file=rel_include_file, package="INPUT", internal=False),
+        StackFrame("api.link_class()",
+                   file=rel_include_file,
+                   package=Package.INPUT_PACKAGE_NAME,
+                   internal=False),
         StackFrame("link('asciidoxy::geometry::Coordinate')",
                    file=rel_include_file,
-                   package="INPUT",
+                   package=Package.INPUT_PACKAGE_NAME,
                    internal=False),
-        StackFrame("link('Coordinate')", file=None, package="INPUT", internal=True)
+        StackFrame("link('Coordinate')",
+                   file=None,
+                   package=Package.INPUT_PACKAGE_NAME,
+                   internal=True)
     ]]
 
 
@@ -609,11 +532,11 @@ def test_link_cannot_mix_text_and_full_name(warnings_are_errors, generating_api)
         generating_api.link("asciidoxy::geometry::Coordinate", text="ALT", full_name=True)
 
 
-def test_cross_document_ref(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/other_file.adoc")
+def test_cross_document_ref(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/other_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.cross_document_ref("includes/other_file.adoc", anchor="anchor")
         if isinstance(api, GeneratingApi):
             if tdb_single_and_multipage:
@@ -622,41 +545,41 @@ def test_cross_document_ref(test_data_builder, tdb_single_and_multipage):
                 assert result == "<<includes/.asciidoxy.other_file.adoc#anchor,anchor>>"
 
 
-def test_cross_document_ref__with_absolute_path(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
-    target_file = test_data_builder.add_include_file("includes/other_file.adoc")
+def test_cross_document_ref__with_absolute_path(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    target_file = file_builder.add_include_file("includes/other_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         with pytest.raises(InvalidApiCallError):
-            api.cross_document_ref(target_file, anchor="anchor")
+            api.cross_document_ref(target_file.original_file, anchor="anchor")
 
 
-def test_cross_document_ref__requires_filename_packagename_or_anchor(test_data_builder,
+def test_cross_document_ref__requires_filename_packagename_or_anchor(file_builder,
                                                                      tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/other_file.adoc")
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/other_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         with pytest.raises(InvalidApiCallError):
             api.cross_document_ref(link_text="text")
 
 
 def test_cross_document_ref__requires_filename_packagename_or_anchor_not_empty(
-        test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/other_file.adoc")
+        file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/other_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         with pytest.raises(InvalidApiCallError):
             api.cross_document_ref("", package_name="", anchor="", link_text="text")
 
 
-def test_cross_document_ref__file_not_in_workdirectory(test_data_builder, tdb_single_and_multipage,
+def test_cross_document_ref__file_not_in_workdirectory(file_builder, tdb_single_and_multipage,
                                                        tdb_warnings_are_and_are_not_errors):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/other_file.adoc")
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/other_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         if tdb_warnings_are_and_are_not_errors:
             with pytest.raises(IncludeFileNotFoundError):
                 api.cross_document_ref("includes/unknown_file.adoc", anchor="anchor")
@@ -665,11 +588,11 @@ def test_cross_document_ref__file_not_in_workdirectory(test_data_builder, tdb_si
             assert result == ""
 
 
-def test_cross_document_ref__package_missing(test_data_builder, tdb_single_and_multipage,
+def test_cross_document_ref__package_missing(file_builder, tdb_single_and_multipage,
                                              tdb_warnings_are_and_are_not_errors):
-    test_data_builder.add_input_file("input.adoc")
+    file_builder.add_input_file("input.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         if tdb_warnings_are_and_are_not_errors:
             with pytest.raises(MissingPackageError):
                 api.cross_document_ref("includes/other_file.adoc",
@@ -682,12 +605,12 @@ def test_cross_document_ref__package_missing(test_data_builder, tdb_single_and_m
             assert result == ""
 
 
-def test_cross_document_ref__package_file_missing(test_data_builder, tdb_single_and_multipage,
+def test_cross_document_ref__package_file_missing(file_builder, tdb_single_and_multipage,
                                                   tdb_warnings_are_and_are_not_errors):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_package_file("package1", "other_file.adoc")
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_package_file("package1", "other_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         if tdb_warnings_are_and_are_not_errors:
             with pytest.raises(MissingPackageFileError):
                 api.cross_document_ref("another_file.adoc",
@@ -700,13 +623,13 @@ def test_cross_document_ref__package_file_missing(test_data_builder, tdb_single_
             assert result == ""
 
 
-def test_cross_document_ref__file_in_different_package(test_data_builder, tdb_single_and_multipage,
+def test_cross_document_ref__file_in_different_package(file_builder, tdb_single_and_multipage,
                                                        tdb_warnings_are_and_are_not_errors):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_package_file("package1", "other_file.adoc")
-    test_data_builder.add_package_file("package2", "another_file.adoc")
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_package_file("package1", "other_file.adoc")
+    file_builder.add_package_file("package2", "another_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         if tdb_warnings_are_and_are_not_errors:
             with pytest.raises(MissingPackageFileError):
                 api.cross_document_ref("another_file.adoc",
@@ -719,14 +642,14 @@ def test_cross_document_ref__file_in_different_package(test_data_builder, tdb_si
             assert result == ""
 
 
-def test_cross_document_ref__package_must_be_explicit(test_data_builder, tdb_single_and_multipage,
+def test_cross_document_ref__package_must_be_explicit(file_builder, tdb_single_and_multipage,
                                                       tdb_warnings_are_and_are_not_errors):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_package_file("package", "another_file.adoc")
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_package_file("package", "another_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         if tdb_warnings_are_and_are_not_errors:
-            with pytest.raises(MissingPackageFileError):
+            with pytest.raises(IncludeFileNotFoundError):
                 api.cross_document_ref("another_file.adoc", anchor="anchor")
         else:
             result = api.cross_document_ref("another_file.adoc", anchor="anchor")
@@ -734,12 +657,12 @@ def test_cross_document_ref__package_must_be_explicit(test_data_builder, tdb_sin
 
 
 def test_cross_document_ref__direct_access_to_other_package_for_old_style_packages(
-        test_data_builder, tdb_single_and_multipage, tdb_warnings_are_and_are_not_errors):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_package_file("package", "include.adoc")
-    test_data_builder.package_manager.input_package().scoped = False
+        file_builder, tdb_single_and_multipage, tdb_warnings_are_and_are_not_errors):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_package_file("package", "include.adoc")
+    file_builder.package_manager.input_package().scoped = False
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.cross_document_ref("include.adoc", link_text="bla")
         if isinstance(api, GeneratingApi):
             if tdb_single_and_multipage:
@@ -748,11 +671,11 @@ def test_cross_document_ref__direct_access_to_other_package_for_old_style_packag
                 assert result == "<<.asciidoxy.include.adoc#top-include-top,bla>>"
 
 
-def test_cross_document_ref__with_link_text(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/other_file.adoc")
+def test_cross_document_ref__with_link_text(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/other_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.cross_document_ref("includes/other_file.adoc",
                                         anchor="anchor",
                                         link_text="Link")
@@ -763,12 +686,12 @@ def test_cross_document_ref__with_link_text(test_data_builder, tdb_single_and_mu
                 assert result == "<<includes/.asciidoxy.other_file.adoc#anchor,Link>>"
 
 
-def test_cross_document_ref__link_text_document_title(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
-    include_file = test_data_builder.add_include_file("includes/other_file.adoc")
-    include_file.write_text("= Other file\n\n")
+def test_cross_document_ref__link_text_document_title(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    include_file = file_builder.add_include_file("includes/other_file.adoc")
+    include_file.original_file.write_text("= Other file\n\n")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.cross_document_ref("includes/other_file.adoc")
         if isinstance(api, GeneratingApi):
             if tdb_single_and_multipage:
@@ -778,11 +701,11 @@ def test_cross_document_ref__link_text_document_title(test_data_builder, tdb_sin
                                   "#top-includes-other_file-top,Other file>>")
 
 
-def test_cross_document_ref__link_text_document_name(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/other_file.adoc")
+def test_cross_document_ref__link_text_document_name(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/other_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.cross_document_ref("includes/other_file.adoc")
         if isinstance(api, GeneratingApi):
             if tdb_single_and_multipage:
@@ -792,11 +715,11 @@ def test_cross_document_ref__link_text_document_name(test_data_builder, tdb_sing
                                   "#top-includes-other_file-top,other_file>>")
 
 
-def test_cross_document_ref__to_other_package(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_package_file("package", "include.adoc")
+def test_cross_document_ref__to_other_package(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_package_file("package", "include.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.cross_document_ref("include.adoc", package_name="package", link_text="bla")
         if isinstance(api, GeneratingApi):
             if tdb_single_and_multipage:
@@ -805,11 +728,11 @@ def test_cross_document_ref__to_other_package(test_data_builder, tdb_single_and_
                 assert result == "<<.asciidoxy.include.adoc#top-include-top,bla>>"
 
 
-def test_cross_document_ref__to_package_default(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_package_default_file("package", "include.adoc")
+def test_cross_document_ref__to_package_default(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_package_default_file("package", "include.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.cross_document_ref(package_name="package", link_text="bla")
         if isinstance(api, GeneratingApi):
             if tdb_single_and_multipage:
@@ -819,11 +742,11 @@ def test_cross_document_ref__to_package_default(test_data_builder, tdb_single_an
 
 
 def test_cross_document_ref__links_to_package_are_relative_to_package_root(
-        test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("some_dir/input.adoc")
-    test_data_builder.add_package_file("package", "other_dir/include.adoc")
+        file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("some_dir/input.adoc")
+    file_builder.add_package_file("package", "other_dir/include.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.cross_document_ref("other_dir/include.adoc",
                                         package_name="package",
                                         link_text="bla")
@@ -835,12 +758,12 @@ def test_cross_document_ref__links_to_package_are_relative_to_package_root(
                                   "top-other_dir-include-top,bla>>")
 
 
-def test_cross_document_ref__document_not_in_tree(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("some_dir/input.adoc")
-    test_data_builder.add_package_file("package", "other_dir/include.adoc", register=False)
-    test_data_builder.warnings_are_errors = True
+def test_cross_document_ref__document_not_in_tree(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("some_dir/input.adoc")
+    file_builder.add_package_file("package", "other_dir/include.adoc", register=False)
+    file_builder.warnings_are_errors = True
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         if isinstance(api, PreprocessingApi):
             result = api.cross_document_ref("other_dir/include.adoc",
                                             package_name="package",
@@ -855,10 +778,10 @@ def test_cross_document_ref__document_not_in_tree(test_data_builder, tdb_single_
                                        link_text="bla")
 
 
-def test_anchor(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
+def test_anchor(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.anchor("my-anchor", link_text="anchor text")
         if isinstance(api, PreprocessingApi):
             assert result == ""
@@ -866,10 +789,10 @@ def test_anchor(test_data_builder, tdb_single_and_multipage):
             assert result == "[[my-anchor,anchor text]]"
 
 
-def test_anchor__no_link_text(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
+def test_anchor__no_link_text(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.anchor("my-anchor")
         if isinstance(api, PreprocessingApi):
             assert result == ""
@@ -877,16 +800,17 @@ def test_anchor__no_link_text(test_data_builder, tdb_single_and_multipage):
             assert result == "[[my-anchor]]"
 
 
-def test_cross_document_ref__flexible_anchor__same_package(test_data_builder,
-                                                           tdb_single_and_multipage):
-    input_file = test_data_builder.add_input_file("input.adoc")
-    include_file = test_data_builder.add_include_file("include.adoc")
+def test_cross_document_ref__flexible_anchor__same_package(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("include.adoc")
 
-    for api in test_data_builder.apis():
-        api._work_file = include_file
+    for api in file_builder.apis():
+        # TODO
+        api._document.relative_path = Path("include.adoc")
         api.anchor("my-anchor", link_text="my anchor link text")
 
-        api._work_file = input_file
+        # TODO
+        api._document.relative_path = Path("input.adoc")
         result = api.cross_document_ref(anchor="my-anchor")
         if isinstance(api, PreprocessingApi):
             assert result == ""
@@ -897,16 +821,17 @@ def test_cross_document_ref__flexible_anchor__same_package(test_data_builder,
                 assert result == "<<.asciidoxy.include.adoc#my-anchor,my anchor link text>>"
 
 
-def test_cross_document_ref__flexible_anchor__other_package(test_data_builder,
-                                                            tdb_single_and_multipage):
-    input_file = test_data_builder.add_input_file("input.adoc")
-    include_file = test_data_builder.add_package_file("pacA", "include.adoc")
+def test_cross_document_ref__flexible_anchor__other_package(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_package_file("pacA", "include.adoc")
 
-    for api in test_data_builder.apis():
-        api._work_file = include_file
+    for api in file_builder.apis():
+        # TODO
+        api._document.relative_path = Path("include.adoc")
         api.anchor("my-anchor", link_text="my anchor link text")
 
-        api._work_file = input_file
+        # TODO
+        api._document.relative_path = Path("input.adoc")
         result = api.cross_document_ref(anchor="my-anchor")
         if isinstance(api, PreprocessingApi):
             assert result == ""
@@ -917,16 +842,17 @@ def test_cross_document_ref__flexible_anchor__other_package(test_data_builder,
                 assert result == "<<.asciidoxy.include.adoc#my-anchor,my anchor link text>>"
 
 
-def test_cross_document_ref__flexible_anchor__link_text(test_data_builder,
-                                                        tdb_single_and_multipage):
-    input_file = test_data_builder.add_input_file("input.adoc")
-    include_file = test_data_builder.add_include_file("include.adoc")
+def test_cross_document_ref__flexible_anchor__link_text(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("include.adoc")
 
-    for api in test_data_builder.apis():
-        api._work_file = include_file
+    for api in file_builder.apis():
+        # TODO
+        api._document.relative_path = Path("include.adoc")
         api.anchor("my-anchor", link_text="my anchor link text")
 
-        api._work_file = input_file
+        # TODO
+        api._document.relative_path = Path("input.adoc")
         result = api.cross_document_ref(anchor="my-anchor", link_text="other text")
         if isinstance(api, PreprocessingApi):
             assert result == ""
@@ -937,16 +863,17 @@ def test_cross_document_ref__flexible_anchor__link_text(test_data_builder,
                 assert result == "<<.asciidoxy.include.adoc#my-anchor,other text>>"
 
 
-def test_cross_document_ref__flexible_anchor__no_link_text(test_data_builder,
-                                                           tdb_single_and_multipage):
-    input_file = test_data_builder.add_input_file("input.adoc")
-    include_file = test_data_builder.add_include_file("include.adoc")
+def test_cross_document_ref__flexible_anchor__no_link_text(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("include.adoc")
 
-    for api in test_data_builder.apis():
-        api._work_file = include_file
+    for api in file_builder.apis():
+        # TODO
+        api._document.relative_path = Path("include.adoc")
         api.anchor("my-anchor")
 
-        api._work_file = input_file
+        # TODO
+        api._document.relative_path = Path("input.adoc")
         result = api.cross_document_ref(anchor="my-anchor")
         if isinstance(api, PreprocessingApi):
             assert result == ""
@@ -957,13 +884,12 @@ def test_cross_document_ref__flexible_anchor__no_link_text(test_data_builder,
                 assert result == "<<.asciidoxy.include.adoc#my-anchor,my-anchor>>"
 
 
-def test_cross_document_ref__flexible_anchor__missing_anchor(test_data_builder,
-                                                             tdb_single_and_multipage,
+def test_cross_document_ref__flexible_anchor__missing_anchor(file_builder, tdb_single_and_multipage,
                                                              tdb_warnings_are_and_are_not_errors):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("include.adoc")
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("include.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         if tdb_warnings_are_and_are_not_errors and isinstance(api, GeneratingApi):
             with pytest.raises(UnknownAnchorError):
                 api.cross_document_ref(anchor="my-anchor")
@@ -979,11 +905,11 @@ def test_cross_document_ref__flexible_anchor__missing_anchor(test_data_builder,
                     assert result == "<<.asciidoxy.input.adoc#my-anchor,my-anchor>>"
 
 
-def test_include__relative_path(test_data_builder):
-    input_file = test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/another_file.adoc")
+def test_include__relative_path(file_builder):
+    input_file = file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/another_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("includes/another_file.adoc")
         lines = result.splitlines()
         assert len(lines) == 2
@@ -993,17 +919,17 @@ def test_include__relative_path(test_data_builder):
         assert lines[1].startswith("include::")
         assert lines[1].endswith("[leveloffset=+1]")
 
-        file_name = input_file.parent / lines[1][9:-16]
+        file_name = input_file.work_dir / lines[1][9:-16]
         assert file_name.is_file() == isinstance(api, GeneratingApi)
         assert file_name.name == ".asciidoxy.another_file.adoc"
         assert file_name.is_absolute()
 
 
-def test_include__relative_path__parent_directory(test_data_builder):
-    input_file = test_data_builder.add_input_file("src/input_file.adoc")
-    test_data_builder.add_include_file("includes/another_file.adoc")
+def test_include__relative_path__parent_directory(file_builder):
+    input_file = file_builder.add_input_file("src/input_file.adoc")
+    file_builder.add_include_file("includes/another_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("../includes/another_file.adoc")
         lines = result.splitlines()
         assert len(lines) == 2
@@ -1013,38 +939,38 @@ def test_include__relative_path__parent_directory(test_data_builder):
         assert lines[1].startswith("include::")
         assert lines[1].endswith("[leveloffset=+1]")
 
-        file_name = input_file.parent / lines[1][9:-16]
+        file_name = input_file.work_dir / lines[1][9:-16]
         assert file_name.is_file() == isinstance(api, GeneratingApi)
         assert file_name.name == ".asciidoxy.another_file.adoc"
         assert file_name.is_absolute()
 
 
-def test_include__relative_path_multipage(test_data_builder):
-    test_data_builder.add_input_file("input.adoc")
-    include_file = test_data_builder.add_include_file("includes/another_file.adoc")
-    test_data_builder.multipage = True
+def test_include__relative_path_multipage(file_builder):
+    file_builder.add_input_file("input.adoc")
+    include_file = file_builder.add_include_file("includes/another_file.adoc")
+    file_builder.multipage = True
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("includes/another_file.adoc")
         assert result == "<<includes/another_file.adoc#,another_file>>"
-        assert include_file.with_name(".asciidoxy.another_file.adoc").is_file() == isinstance(
-            api, GeneratingApi)
+        assert include_file.work_file.with_name(
+            ".asciidoxy.another_file.adoc").is_file() == isinstance(api, GeneratingApi)
 
 
-def test_include__absolute_path_not_allowed(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
-    include_file = test_data_builder.add_include_file("includes/another_file.adoc")
+def test_include__absolute_path_not_allowed(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    include_file = file_builder.add_include_file("includes/another_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         with pytest.raises(InvalidApiCallError):
-            api.include(str(include_file))
+            api.include(str(include_file.original_file))
 
 
-def test_include__from_package(test_data_builder):
-    input_file = test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_package_file("package-a", "another_file.adoc")
+def test_include__from_package(file_builder):
+    input_file = file_builder.add_input_file("input.adoc")
+    file_builder.add_package_file("package-a", "another_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("another_file.adoc", package_name="package-a")
         lines = result.splitlines()
         assert len(lines) == 2
@@ -1054,26 +980,24 @@ def test_include__from_package(test_data_builder):
         assert lines[1].startswith("include::")
         assert lines[1].endswith("[leveloffset=+1]")
 
-        file_name = input_file.parent / lines[1][9:-16]
+        file_name = input_file.work_dir / lines[1][9:-16]
         assert file_name.is_file() == isinstance(api, GeneratingApi)
         assert file_name.name == ".asciidoxy.another_file.adoc"
         assert file_name.is_absolute()
 
 
-def test_include__inside_package(test_data_builder):
-    input_file = test_data_builder.add_input_file("input.adoc")
-    include_file = test_data_builder.add_package_file("package-a",
-                                                      "another_file.adoc",
-                                                      register=False)
-    test_data_builder.add_package_file("package-a", "yet_another_file.adoc", register=False)
+def test_include__inside_package(file_builder):
+    input_file = file_builder.add_input_file("input.adoc")
+    include_file = file_builder.add_package_file("package-a", "another_file.adoc", register=False)
+    file_builder.add_package_file("package-a", "yet_another_file.adoc", register=False)
 
-    include_file.write_text("""\
+    include_file.work_file.write_text("""\
 = Another file
 
 ${include("yet_another_file.adoc")}
 """)
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("another_file.adoc", package_name="package-a")
         lines = result.splitlines()
         assert len(lines) == 2
@@ -1083,18 +1007,18 @@ ${include("yet_another_file.adoc")}
         assert lines[1].startswith("include::")
         assert lines[1].endswith("[leveloffset=+1]")
 
-        file_name = input_file.parent / lines[1][9:-16]
+        file_name = input_file.work_dir / lines[1][9:-16]
         assert file_name.is_file() == isinstance(api, GeneratingApi)
         assert file_name.name == ".asciidoxy.another_file.adoc"
         assert file_name.is_absolute()
 
 
-def test_include__from_wrong_package(test_data_builder, tdb_warnings_are_and_are_not_errors):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_package_file("package-a", "another_file.adoc")
-    test_data_builder.add_package_file("package-b", "the_right_file.adoc")
+def test_include__from_wrong_package(file_builder, tdb_warnings_are_and_are_not_errors):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_package_file("package-a", "another_file.adoc")
+    file_builder.add_package_file("package-b", "the_right_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         if tdb_warnings_are_and_are_not_errors:
             with pytest.raises(MissingPackageFileError):
                 api.include("the_right_file.adoc", package_name="package-a")
@@ -1102,11 +1026,11 @@ def test_include__from_wrong_package(test_data_builder, tdb_warnings_are_and_are
             assert api.include("the_right_file.adoc", package_name="package-a") == ""
 
 
-def test_include__package_does_not_exist(test_data_builder, tdb_warnings_are_and_are_not_errors):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_package_file("package-a", "another_file.adoc")
+def test_include__package_does_not_exist(file_builder, tdb_warnings_are_and_are_not_errors):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_package_file("package-a", "another_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         if tdb_warnings_are_and_are_not_errors:
             with pytest.raises(MissingPackageError):
                 api.include("the_right_file.adoc", package_name="package-b")
@@ -1114,12 +1038,12 @@ def test_include__package_does_not_exist(test_data_builder, tdb_warnings_are_and
             assert api.include("the_right_file.adoc", package_name="package-b") == ""
 
 
-def test_include__direct_access_to_other_package_for_old_style_packages(test_data_builder):
-    input_file = test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_package_file("package-a", "another_file.adoc")
-    test_data_builder.package_manager.input_package().scoped = False
+def test_include__direct_access_to_other_package_for_old_style_packages(file_builder):
+    input_file = file_builder.add_input_file("input.adoc")
+    file_builder.add_package_file("package-a", "another_file.adoc")
+    file_builder.package_manager.input_package().scoped = False
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("another_file.adoc")
         lines = result.splitlines()
         assert len(lines) == 2
@@ -1129,93 +1053,93 @@ def test_include__direct_access_to_other_package_for_old_style_packages(test_dat
         assert lines[1].startswith("include::")
         assert lines[1].endswith("[leveloffset=+1]")
 
-        file_name = input_file.parent / lines[1][9:-16]
+        file_name = input_file.work_dir / lines[1][9:-16]
         assert file_name.is_file() == isinstance(api, GeneratingApi)
         assert file_name.name == ".asciidoxy.another_file.adoc"
         assert file_name.is_absolute()
 
 
-def test_include__with_leveloffset(test_data_builder):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/another_file.adoc")
+def test_include__with_leveloffset(file_builder):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/another_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("includes/another_file.adoc", leveloffset="-1")
         assert result.endswith("[leveloffset=-1]")
 
 
-def test_include__without_leveloffset(test_data_builder):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/another_file.adoc")
+def test_include__without_leveloffset(file_builder):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/another_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("includes/another_file.adoc", leveloffset=None)
         assert result.endswith("[]")
 
 
-def test_include__multipage_with_link_text(test_data_builder):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/another_file.adoc")
-    test_data_builder.multipage = True
+def test_include__multipage_with_link_text(file_builder):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/another_file.adoc")
+    file_builder.multipage = True
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("includes/another_file.adoc", link_text="Link")
         assert result == "<<includes/another_file.adoc#,Link>>"
 
 
-def test_include__multipage_with_document_title(test_data_builder):
-    test_data_builder.add_input_file("input.adoc")
-    include_file = test_data_builder.add_include_file("includes/another_file.adoc")
-    include_file.write_text("= Another file's title\n\n")
-    test_data_builder.multipage = True
+def test_include__multipage_with_document_title(file_builder):
+    file_builder.add_input_file("input.adoc")
+    include_file = file_builder.add_include_file("includes/another_file.adoc")
+    include_file.original_file.write_text("= Another file's title\n\n")
+    file_builder.multipage = True
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("includes/another_file.adoc")
         assert result == "<<includes/another_file.adoc#,Another file's title>>"
 
 
-def test_include__multipage_with_document_stem(test_data_builder):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/another_file.adoc")
-    test_data_builder.multipage = True
+def test_include__multipage_with_document_stem(file_builder):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/another_file.adoc")
+    file_builder.multipage = True
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("includes/another_file.adoc")
         assert result == "<<includes/another_file.adoc#,another_file>>"
 
 
-def test_include__multipage_with_prefix_text(test_data_builder):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/another_file.adoc")
-    test_data_builder.multipage = True
+def test_include__multipage_with_prefix_text(file_builder):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/another_file.adoc")
+    file_builder.multipage = True
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("includes/another_file.adoc", link_prefix=". ")
         assert result == ". <<includes/another_file.adoc#,another_file>>"
 
 
-def test_include__multipage_without_link(test_data_builder):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/another_file.adoc")
-    test_data_builder.multipage = True
+def test_include__multipage_without_link(file_builder):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/another_file.adoc")
+    file_builder.multipage = True
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("includes/another_file.adoc", link_prefix=". ", multipage_link=False)
         assert result == ""
 
 
-def test_include__with_extra_options(test_data_builder):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/another_file.adoc")
+def test_include__with_extra_options(file_builder):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/another_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("includes/another_file.adoc", lines="1..10", indent=12)
         assert result.endswith("[lines=1..10,indent=12,leveloffset=+1]")
 
 
-def test_include__error_file_not_found(test_data_builder, tdb_warnings_are_and_are_not_errors):
-    test_data_builder.add_input_file("input.adoc")
-    for api in test_data_builder.apis():
+def test_include__error_file_not_found(file_builder, tdb_warnings_are_and_are_not_errors):
+    file_builder.add_input_file("input.adoc")
+    for api in file_builder.apis():
         if tdb_warnings_are_and_are_not_errors:
             with pytest.raises(IncludeFileNotFoundError):
                 api.include("non_existing_file.adoc")
@@ -1223,22 +1147,22 @@ def test_include__error_file_not_found(test_data_builder, tdb_warnings_are_and_a
             assert api.include("non_existing_file.adoc") == ""
 
 
-def test_include__always_embed(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
-    include_file = test_data_builder.add_include_file("includes/another_file.adoc")
-    include_file.write_text("Embedded")
+def test_include__always_embed(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    include_file = file_builder.add_include_file("includes/another_file.adoc")
+    include_file.work_file.write_text("Embedded")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("includes/another_file.adoc", always_embed=True)
         assert result == "Embedded"
 
 
-def test_include__always_embed__correct_sub_context(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
-    include_file = test_data_builder.add_include_file("includes/another_file.adoc")
-    include_file.write_text("""${cross_document_ref("../input.adoc", anchor="bla")}""")
+def test_include__always_embed__correct_sub_context(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    include_file = file_builder.add_include_file("includes/another_file.adoc")
+    include_file.work_file.write_text("""${cross_document_ref("../input.adoc", anchor="bla")}""")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         result = api.include("includes/another_file.adoc", always_embed=True)
 
         if isinstance(api, GeneratingApi):
@@ -1285,14 +1209,14 @@ def test_process_adoc_single_file(warnings_are_errors, test_file_name, single_an
                                                           doxygen_version)
 
     package_manager.set_input_files(input_file)
-    package_manager.work_dir = adoc_data
+    doc = package_manager.prepare_work_directory(input_file)
 
     progress_mock = ProgressMock()
-    output_file = process_adoc(input_file,
+    output_file = process_adoc(doc,
                                api_reference,
                                package_manager,
                                warnings_are_errors=warnings_are_errors,
-                               progress=progress_mock)[input_file]
+                               progress=progress_mock)[doc.work_file]
     assert output_file.is_file()
 
     content = output_file.read_text()
@@ -1305,23 +1229,23 @@ def test_process_adoc_single_file(warnings_are_errors, test_file_name, single_an
 
 
 def test_process_adoc_multi_file(single_and_multipage, api_reference, package_manager,
-                                 adoc_data_work_file, update_expected_results, adoc_data,
+                                 adoc_data_document, update_expected_results, adoc_data,
                                  doxygen_version):
-    main_doc_file = adoc_data_work_file("multifile_test.input.adoc")
-    sub_doc_file = main_doc_file.parent / "sub_directory" / "multifile_subdoc_test.input.adoc"
-    sub_doc_in_table_file = main_doc_file.parent / "sub_directory" \
+    main_doc = adoc_data_document("multifile_test.input.adoc")
+    sub_doc_file = main_doc.work_dir / "sub_directory" / "multifile_subdoc_test.input.adoc"
+    sub_doc_in_table_file = main_doc.work_dir / "sub_directory" \
         / "multifile_subdoc_in_table_test.input.adoc"
 
     progress_mock = ProgressMock()
-    output_files = process_adoc(main_doc_file,
+    output_files = process_adoc(main_doc,
                                 api_reference,
                                 package_manager,
                                 warnings_are_errors=True,
                                 multipage=single_and_multipage,
                                 progress=progress_mock)
     assert len(output_files) == 3
-    assert (
-        output_files[main_doc_file] == main_doc_file.with_name(f".asciidoxy.{main_doc_file.name}"))
+    assert (output_files[main_doc.work_file] == main_doc.work_file.with_name(
+        f".asciidoxy.{main_doc.work_file.name}"))
     assert (output_files[sub_doc_file] == sub_doc_file.with_name(f".asciidoxy.{sub_doc_file.name}"))
     assert (output_files[sub_doc_in_table_file] == sub_doc_file.with_name(
         f".asciidoxy.{sub_doc_in_table_file.name}"))
@@ -1329,9 +1253,9 @@ def test_process_adoc_multi_file(single_and_multipage, api_reference, package_ma
         assert output_file.is_file()
         expected_output_file = adoc_data_expected_result_file(input_file, single_and_multipage,
                                                               doxygen_version)
-        expected_output_file = adoc_data / expected_output_file.relative_to(main_doc_file.parent)
+        expected_output_file = adoc_data / expected_output_file.relative_to(main_doc.work_dir)
         content = output_file.read_text()
-        content = content.replace(os.fspath(main_doc_file.parent), "SRC_DIR")
+        content = content.replace(os.fspath(main_doc.work_dir), "SRC_DIR")
 
         if update_expected_results:
             expected_output_file.write_text(content)
@@ -1343,29 +1267,29 @@ def test_process_adoc_multi_file(single_and_multipage, api_reference, package_ma
 
 
 def test_process_adoc_env_variables(single_and_multipage, api_reference, package_manager,
-                                    adoc_data_work_file, doxygen_version, update_expected_results,
+                                    adoc_data_document, doxygen_version, update_expected_results,
                                     adoc_data):
-    main_doc_file = adoc_data_work_file("env_variables.input.adoc")
-    sub_doc_file = main_doc_file.parent / "env_variables_include.input.adoc"
+    main_doc = adoc_data_document("env_variables.input.adoc")
+    sub_doc_file = main_doc.work_dir / "env_variables_include.input.adoc"
 
     progress_mock = ProgressMock()
-    output_files = process_adoc(main_doc_file,
+    output_files = process_adoc(main_doc,
                                 api_reference,
                                 package_manager,
                                 warnings_are_errors=True,
                                 multipage=single_and_multipage,
                                 progress=progress_mock)
     assert len(output_files) == 2
-    assert (
-        output_files[main_doc_file] == main_doc_file.with_name(f".asciidoxy.{main_doc_file.name}"))
+    assert (output_files[main_doc.work_file] == main_doc.work_file.with_name(
+        f".asciidoxy.{main_doc.work_file.name}"))
     assert (output_files[sub_doc_file] == sub_doc_file.with_name(f".asciidoxy.{sub_doc_file.name}"))
     for input_file, output_file in output_files.items():
         assert output_file.is_file()
         expected_output_file = adoc_data_expected_result_file(input_file, single_and_multipage,
                                                               doxygen_version)
-        expected_output_file = adoc_data / expected_output_file.relative_to(main_doc_file.parent)
+        expected_output_file = adoc_data / expected_output_file.relative_to(main_doc.work_dir)
         content = output_file.read_text()
-        content = content.replace(os.fspath(main_doc_file.parent), "SRC_DIR")
+        content = content.replace(os.fspath(main_doc.work_dir), "SRC_DIR")
 
         if update_expected_results:
             expected_output_file.write_text(content)
@@ -1377,19 +1301,19 @@ def test_process_adoc_env_variables(single_and_multipage, api_reference, package
 
 
 def test_process_adoc__embedded_file_not_in_output_map(single_and_multipage, api_reference,
-                                                       package_manager, adoc_data_work_file):
-    main_doc_file = adoc_data_work_file("embeddedfile_test.input.adoc")
+                                                       package_manager, adoc_data_document):
+    main_doc = adoc_data_document("embeddedfile_test.input.adoc")
 
     progress_mock = ProgressMock()
-    output_files = process_adoc(main_doc_file,
+    output_files = process_adoc(main_doc,
                                 api_reference,
                                 package_manager,
                                 warnings_are_errors=True,
                                 multipage=single_and_multipage,
                                 progress=progress_mock)
     assert len(output_files) == 1
-    assert (
-        output_files[main_doc_file] == main_doc_file.with_name(f".asciidoxy.{main_doc_file.name}"))
+    assert (output_files[main_doc.work_file] == main_doc.work_file.with_name(
+        f".asciidoxy.{main_doc.work_file.name}"))
 
     assert progress_mock.ready == progress_mock.total
     assert progress_mock.total == 2
@@ -1403,15 +1327,13 @@ def test_process_adoc_file_warning(test_file_name, single_and_multipage, adoc_da
                                    package_manager, update_expected_results, doxygen_version):
     input_file = adoc_data / f"{test_file_name}.input.adoc"
     package_manager.set_input_files(input_file)
-    package_manager.work_dir = adoc_data
+    doc = package_manager.prepare_work_directory(input_file)
 
     expected_output_file = adoc_data_expected_result_file(input_file, single_and_multipage,
                                                           doxygen_version)
 
-    output_file = process_adoc(input_file,
-                               api_reference,
-                               package_manager,
-                               multipage=single_and_multipage)[input_file]
+    output_file = process_adoc(doc, api_reference, package_manager,
+                               multipage=single_and_multipage)[doc.work_file]
     assert output_file.is_file()
     content = output_file.read_text()
     if update_expected_results:
@@ -1429,10 +1351,10 @@ def test_process_adoc_file_warning_as_error(test_file_name, error, single_and_mu
                                             api_reference, package_manager):
     input_file = adoc_data / f"{test_file_name}.input.adoc"
     package_manager.set_input_files(input_file)
-    package_manager.work_dir = adoc_data
+    doc = package_manager.prepare_work_directory(input_file)
 
     with pytest.raises(error):
-        process_adoc(input_file, api_reference, package_manager, warnings_are_errors=True)
+        process_adoc(doc, api_reference, package_manager, warnings_are_errors=True)
 
 
 def test_require_version__exact_match(preprocessing_api):
@@ -1490,7 +1412,7 @@ def test_context_link_to_element_singlepage(context, generating_api):
     element_id = "element"
     file_containing_element = "other_file.adoc"
     link_text = "Link"
-    context.inserted[element_id] = (context.current_document.in_file.parent /
+    context.inserted[element_id] = (context.current_document_node.in_file.parent /
                                     file_containing_element, [])
     assert generating_api.link_to_element(element_id,
                                           link_text) == f"xref:{element_id}[++{link_text}++]"
@@ -1500,7 +1422,7 @@ def test_context_link_to_element_multipage(context, multipage, generating_api):
     element_id = "element"
     file_containing_element = "other_file.adoc"
     link_text = "Link"
-    context.inserted[element_id] = (context.current_document.in_file.parent /
+    context.inserted[element_id] = (context.current_document_node.in_file.parent /
                                     file_containing_element, [])
     assert (generating_api.link_to_element(
         element_id, link_text) == f"xref:{file_containing_element}#{element_id}[++{link_text}++]")
@@ -1510,7 +1432,7 @@ def test_context_link_to_element_multipage_element_in_the_same_document(
         context, multipage, generating_api):
     element_id = "element"
     link_text = "Link"
-    context.inserted[element_id] = (context.current_document.in_file, [])
+    context.inserted[element_id] = (context.current_document_node.in_file, [])
     assert (generating_api.link_to_element(element_id,
                                            link_text) == f"xref:{element_id}[++{link_text}++]")
 
@@ -1557,11 +1479,11 @@ def test_api_proxy__link_class(generating_api):
     assert result == ("xref:cpp-classasciidoxy_1_1geometry_1_1_coordinate[++Coordinate++]")
 
 
-def test_api_proxy__cross_document_ref(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/other_file.adoc")
+def test_api_proxy__cross_document_ref(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/other_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         proxy = ApiProxy(api)
         result = proxy.cross_document_ref("includes/other_file.adoc", anchor="anchor")
         if isinstance(api, GeneratingApi):
@@ -1571,11 +1493,11 @@ def test_api_proxy__cross_document_ref(test_data_builder, tdb_single_and_multipa
                 assert result == "<<includes/.asciidoxy.other_file.adoc#anchor,anchor>>"
 
 
-def test_api_proxy__cross_document_ref__old_syntax(test_data_builder, tdb_single_and_multipage):
-    test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/other_file.adoc")
+def test_api_proxy__cross_document_ref__old_syntax(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/other_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         proxy = ApiProxy(api)
         result = proxy.cross_document_ref("includes/other_file.adoc", "anchor")
         if isinstance(api, GeneratingApi):
@@ -1585,11 +1507,11 @@ def test_api_proxy__cross_document_ref__old_syntax(test_data_builder, tdb_single
                 assert result == "<<includes/.asciidoxy.other_file.adoc#anchor,anchor>>"
 
 
-def test_api_proxy__include(test_data_builder):
-    input_file = test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/another_file.adoc")
+def test_api_proxy__include(file_builder):
+    input_file = file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/another_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         proxy = ApiProxy(api)
         result = proxy.include("includes/another_file.adoc")
         lines = result.splitlines()
@@ -1600,17 +1522,17 @@ def test_api_proxy__include(test_data_builder):
         assert lines[1].startswith("include::")
         assert lines[1].endswith("[leveloffset=+1]")
 
-        file_name = input_file.parent / lines[1][9:-16]
+        file_name = input_file.work_dir / lines[1][9:-16]
         assert file_name.is_file() == isinstance(api, GeneratingApi)
         assert file_name.name == ".asciidoxy.another_file.adoc"
         assert file_name.is_absolute()
 
 
-def test_api_proxy__include__old_syntax(test_data_builder):
-    input_file = test_data_builder.add_input_file("input.adoc")
-    test_data_builder.add_include_file("includes/another_file.adoc")
+def test_api_proxy__include__old_syntax(file_builder):
+    input_file = file_builder.add_input_file("input.adoc")
+    file_builder.add_include_file("includes/another_file.adoc")
 
-    for api in test_data_builder.apis():
+    for api in file_builder.apis():
         proxy = ApiProxy(api)
         result = proxy.include("includes/another_file.adoc", "+2")
         lines = result.splitlines()
@@ -1621,7 +1543,7 @@ def test_api_proxy__include__old_syntax(test_data_builder):
         assert lines[1].startswith("include::")
         assert lines[1].endswith("[leveloffset=+2]")
 
-        file_name = input_file.parent / lines[1][9:-16]
+        file_name = input_file.work_dir / lines[1][9:-16]
         assert file_name.is_file() == isinstance(api, GeneratingApi)
         assert file_name.name == ".asciidoxy.another_file.adoc"
         assert file_name.is_absolute()

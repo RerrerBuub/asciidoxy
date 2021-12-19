@@ -17,9 +17,11 @@ from pathlib import Path
 
 import pytest
 
+from asciidoxy.document import Package
 from asciidoxy.generator.context import StackFrame, stacktrace
 from asciidoxy.generator.errors import ConsistencyError, DuplicateAnchorError, UnknownAnchorError
 from asciidoxy.generator.navigation import DocumentTreeNode
+from asciidoxy.packaging import UnknownFileError, UnknownPackageError
 
 from .builders import make_compound
 
@@ -36,8 +38,6 @@ def test_create_sub_context(empty_context):
 
     sub = context.sub_context()
     assert sub is not context
-
-    assert sub.base_dir == context.base_dir
 
     assert sub.namespace == "ns"
     assert sub.language == "lang"
@@ -58,7 +58,7 @@ def test_create_sub_context(empty_context):
     assert sub.anchors is context.anchors
     assert sub.in_to_out_file_map is context.in_to_out_file_map
     assert sub.embedded_file_map is context.embedded_file_map
-    assert sub.current_document is context.current_document
+    assert sub.current_document_node is context.current_document_node
     assert sub.current_package is context.current_package
     assert sub.call_stack is context.call_stack
 
@@ -84,11 +84,11 @@ def test_create_sub_context(empty_context):
 def test_file_with_element__different_file(empty_context):
     empty_context.multipage = True
 
-    empty_context.current_document.in_file = Path("file_1.adoc")
+    empty_context.current_document_node.in_file = Path("file_1.adoc")
     empty_context.insert(make_compound(language="lang", name="type1"))
     empty_context.insert(make_compound(language="lang", name="type2"))
 
-    empty_context.current_document.in_file = Path("file_2.adoc")
+    empty_context.current_document_node.in_file = Path("file_2.adoc")
     empty_context.insert(make_compound(language="lang", name="type3"))
     empty_context.insert(make_compound(language="lang", name="type4"))
 
@@ -99,11 +99,11 @@ def test_file_with_element__different_file(empty_context):
 def test_file_with_element__same_file(empty_context):
     empty_context.multipage = True
 
-    empty_context.current_document.in_file = Path("file_1.adoc")
+    empty_context.current_document_node.in_file = Path("file_1.adoc")
     empty_context.insert(make_compound(language="lang", name="type1"))
     empty_context.insert(make_compound(language="lang", name="type2"))
 
-    empty_context.current_document.in_file = Path("file_2.adoc")
+    empty_context.current_document_node.in_file = Path("file_2.adoc")
     empty_context.insert(make_compound(language="lang", name="type3"))
     empty_context.insert(make_compound(language="lang", name="type4"))
 
@@ -114,11 +114,11 @@ def test_file_with_element__same_file(empty_context):
 def test_file_with_element__not_in_singlepage(empty_context):
     empty_context.multipage = False
 
-    empty_context.current_document.in_file = Path("file_1.adoc")
+    empty_context.current_document_node.in_file = Path("file_1.adoc")
     empty_context.insert(make_compound(language="lang", name="type1"))
     empty_context.insert(make_compound(language="lang", name="type2"))
 
-    empty_context.current_document.in_file = Path("file_2.adoc")
+    empty_context.current_document_node.in_file = Path("file_2.adoc")
     empty_context.insert(make_compound(language="lang", name="type3"))
     empty_context.insert(make_compound(language="lang", name="type4"))
 
@@ -171,7 +171,7 @@ def test_register_adoc_file__embedded__can_be_embedded_in_multiple_files(empty_c
     out_file = empty_context.register_adoc_file(embedded_file)
 
     other_input_file = input_file.with_name("other_file.adoc")
-    empty_context.current_document.in_file = other_input_file
+    empty_context.current_document_node.in_file = other_input_file
 
     assert empty_context.register_adoc_file(embedded_file) != out_file
 
@@ -207,11 +207,11 @@ def test_link_to_adoc_file__singlepage__multiple_times_embedded__link_different_
 
     empty_context.embedded = True
     empty_context.register_adoc_file(embedded_file)
-    empty_context.current_document.in_file = second_file
+    empty_context.current_document_node.in_file = second_file
     empty_context.register_adoc_file(embedded_file)
     empty_context.embedded = False
 
-    empty_context.current_document.in_file = other_file
+    empty_context.current_document_node.in_file = other_file
     with pytest.raises(ConsistencyError):
         empty_context.link_to_adoc_file(embedded_file)
 
@@ -226,7 +226,7 @@ def test_link_to_adoc_file__singlepage__link_to_embedded_file__link_different_fi
     empty_context.register_adoc_file(embedded_file)
     empty_context.embedded = False
 
-    empty_context.current_document.in_file = other_file
+    empty_context.current_document_node.in_file = other_file
     assert empty_context.link_to_adoc_file(embedded_file) == input_file.relative_to(
         input_file.parent)
 
@@ -266,11 +266,11 @@ def test_link_to_adoc_file__multipage__multiple_times_embedded__link_different_f
     empty_context.multipage = True
     empty_context.embedded = True
     empty_context.register_adoc_file(embedded_file)
-    empty_context.current_document.in_file = second_file
+    empty_context.current_document_node.in_file = second_file
     empty_context.register_adoc_file(embedded_file)
     empty_context.embedded = False
 
-    empty_context.current_document.in_file = other_file
+    empty_context.current_document_node.in_file = other_file
     with pytest.raises(ConsistencyError):
         empty_context.link_to_adoc_file(embedded_file)
 
@@ -286,7 +286,7 @@ def test_link_to_adoc_file__multipage__link_to_embedded_file__link_different_fil
     empty_context.register_adoc_file(embedded_file)
     empty_context.embedded = False
 
-    empty_context.current_document.in_file = other_file
+    empty_context.current_document_node.in_file = other_file
     assert empty_context.link_to_adoc_file(embedded_file) == input_file.relative_to(
         input_file.parent)
 
@@ -299,15 +299,15 @@ def test_link_to_adoc_file__link_to_embedded_file__multiple_times_embedded__link
 
     empty_context.embedded = True
     input_linked_out_file = empty_context.register_adoc_file(embedded_file)
-    empty_context.current_document.in_file = second_file
+    empty_context.current_document_node.in_file = second_file
     second_linked_out_file = empty_context.register_adoc_file(embedded_file)
     empty_context.embedded = False
 
-    empty_context.current_document.in_file = input_file
+    empty_context.current_document_node.in_file = input_file
     assert empty_context.link_to_adoc_file(embedded_file) == input_linked_out_file.relative_to(
         input_file.parent)
 
-    empty_context.current_document.in_file = second_file
+    empty_context.current_document_node.in_file = second_file
     assert empty_context.link_to_adoc_file(embedded_file) == second_linked_out_file.relative_to(
         input_file.parent)
 
@@ -322,7 +322,8 @@ def test_docinfo_footer_file__singlepage__included(empty_context, input_file):
     empty_context.register_adoc_file(input_file)
 
     included_file = input_file.with_name("sub_doc.adoc")
-    empty_context.current_document = DocumentTreeNode(included_file, empty_context.current_document)
+    empty_context.current_document_node = DocumentTreeNode(included_file,
+                                                           empty_context.current_document_node)
     empty_context.register_adoc_file(included_file)
 
     footer_file = empty_context.docinfo_footer_file()
@@ -355,7 +356,8 @@ def test_docinfo_footer_file__multipage__included(empty_context, input_file):
     empty_context.register_adoc_file(input_file)
 
     included_file = input_file.with_name("sub_doc.adoc")
-    empty_context.current_document = DocumentTreeNode(included_file, empty_context.current_document)
+    empty_context.current_document_node = DocumentTreeNode(included_file,
+                                                           empty_context.current_document_node)
     empty_context.register_adoc_file(included_file)
 
     footer_file = empty_context.docinfo_footer_file()
@@ -404,41 +406,41 @@ def test_link_to_anchor__unknown(empty_context, input_file):
 
 
 def test_link_to_element__single_link(empty_context, input_file):
-    empty_context.push_stack("link(\"MyElement\")", input_file, "INPUT")
+    empty_context.push_stack("link(\"MyElement\")", input_file, Package.INPUT_PACKAGE_NAME)
     empty_context.link_to_element("my-element-id")
     empty_context.pop_stack()
 
     assert "my-element-id" in empty_context.linked
     assert empty_context.linked["my-element-id"] == [
         [
-            StackFrame("link(\"MyElement\")", input_file, "INPUT", False),
+            StackFrame("link(\"MyElement\")", input_file, Package.INPUT_PACKAGE_NAME, False),
         ],
     ]
 
 
 def test_link_to_element__multiple_links(empty_context, input_file):
-    empty_context.push_stack("link(\"MyElement\")", input_file, "INPUT")
+    empty_context.push_stack("link(\"MyElement\")", input_file, Package.INPUT_PACKAGE_NAME)
     empty_context.link_to_element("my-element-id")
     empty_context.pop_stack()
 
     other_file = input_file.parent / "other_file.adoc"
-    empty_context.push_stack("link(\"MyElement\")", other_file, "INPUT")
+    empty_context.push_stack("link(\"MyElement\")", other_file, Package.INPUT_PACKAGE_NAME)
     empty_context.link_to_element("my-element-id")
     empty_context.pop_stack()
 
     assert "my-element-id" in empty_context.linked
     assert empty_context.linked["my-element-id"] == [
         [
-            StackFrame("link(\"MyElement\")", input_file, "INPUT", False),
+            StackFrame("link(\"MyElement\")", input_file, Package.INPUT_PACKAGE_NAME, False),
         ],
         [
-            StackFrame("link(\"MyElement\")", other_file, "INPUT", False),
+            StackFrame("link(\"MyElement\")", other_file, Package.INPUT_PACKAGE_NAME, False),
         ],
     ]
 
 
 def test_link_to_element__nested_call_stack(empty_context, input_file):
-    empty_context.push_stack("include(\"other_file.adoc\")", input_file, "INPUT")
+    empty_context.push_stack("include(\"other_file.adoc\")", input_file, Package.INPUT_PACKAGE_NAME)
     other_file = input_file.parent / "other_file.adoc"
     empty_context.push_stack("insert(\"MyElement\")", other_file)
     empty_context.push_stack("link(\"OtherElement\")")
@@ -450,7 +452,8 @@ def test_link_to_element__nested_call_stack(empty_context, input_file):
     assert "other-element-id" in empty_context.linked
     assert empty_context.linked["other-element-id"] == [
         [
-            StackFrame("include(\"other_file.adoc\")", input_file, "INPUT", False),
+            StackFrame("include(\"other_file.adoc\")", input_file, Package.INPUT_PACKAGE_NAME,
+                       False),
             StackFrame("insert(\"MyElement\")", other_file, None, False),
             StackFrame("link(\"OtherElement\")", None, None, False),
         ],
@@ -458,7 +461,7 @@ def test_link_to_element__nested_call_stack(empty_context, input_file):
 
 
 def test_insert__store_stacktrace(empty_context, input_file):
-    empty_context.push_stack("include(\"other_file.adoc\")", input_file, "INPUT")
+    empty_context.push_stack("include(\"other_file.adoc\")", input_file, Package.INPUT_PACKAGE_NAME)
 
     element = make_compound(id="cpp-my_element", name="MyElement")
     empty_context.insert(element)
@@ -467,7 +470,7 @@ def test_insert__store_stacktrace(empty_context, input_file):
 
     assert element.id in empty_context.inserted
     assert empty_context.inserted[element.id] == (input_file, [
-        StackFrame("include(\"other_file.adoc\")", input_file, "INPUT", False),
+        StackFrame("include(\"other_file.adoc\")", input_file, Package.INPUT_PACKAGE_NAME, False),
     ])
 
 
@@ -498,12 +501,142 @@ Previously inserted at:
       include("other_file.adoc")"""
 
 
+def test_find_document__input_pkg__explicit_file(file_builder):
+    doc = file_builder.add_input_file("base/index.adoc", register=False)
+    context = file_builder.context()
+
+    new_doc = context.find_document(Package.INPUT_PACKAGE_NAME, doc.relative_path)
+    assert new_doc.relative_path == doc.relative_path
+    assert new_doc.package.name == Package.INPUT_PACKAGE_NAME
+
+    known_doc = context.find_document(Package.INPUT_PACKAGE_NAME, doc.relative_path)
+    assert known_doc.relative_path == doc.relative_path
+    assert known_doc.package.name == Package.INPUT_PACKAGE_NAME
+
+    assert new_doc is known_doc
+
+
+def test_find_document__input_pkg__default_file(file_builder):
+    doc = file_builder.add_input_file("base/index.adoc", register=False)
+    context = file_builder.context()
+
+    new_doc = context.find_document(Package.INPUT_PACKAGE_NAME, None)
+    assert new_doc.relative_path == doc.relative_path
+    assert new_doc.package.name == Package.INPUT_PACKAGE_NAME
+
+    known_doc = context.find_document(Package.INPUT_PACKAGE_NAME, None)
+    assert known_doc.relative_path == doc.relative_path
+    assert known_doc.package.name == Package.INPUT_PACKAGE_NAME
+
+    assert new_doc is known_doc
+
+
+def test_find_document__input_pkg__file_not_found(file_builder):
+    file_builder.add_input_file("base/index.adoc", register=False)
+    context = file_builder.context()
+
+    with pytest.raises(UnknownFileError):
+        context.find_document(Package.INPUT_PACKAGE_NAME, Path("unknown.adoc"))
+    with pytest.raises(UnknownFileError):
+        context.find_document(Package.INPUT_PACKAGE_NAME, Path("unknown.adoc"))
+
+
+def test_find_document__pkg__explicit_file(file_builder):
+    file_builder.add_input_file("base/index.adoc", register=False)
+    doc = file_builder.add_package_file("my-package", "nice-doc.adoc", register=False)
+    context = file_builder.context()
+
+    new_doc = context.find_document("my-package", doc.relative_path)
+    assert new_doc.relative_path == doc.relative_path
+    assert new_doc.package.name == "my-package"
+
+    known_doc = context.find_document("my-package", doc.relative_path)
+    assert known_doc.relative_path == doc.relative_path
+    assert known_doc.package.name == "my-package"
+
+    assert new_doc is known_doc
+
+
+def test_find_document__pkg__file_not_found(file_builder):
+    file_builder.add_input_file("base/index.adoc", register=False)
+    file_builder.add_package_file("my-package", "nice-doc.adoc", register=False)
+    context = file_builder.context()
+
+    with pytest.raises(UnknownFileError):
+        context.find_document("my-package", Path("other-file.adoc"))
+    with pytest.raises(UnknownFileError):
+        context.find_document("my-package", Path("other-file.adoc"))
+
+
+def test_find_document__pkg__wrong_package_name(file_builder):
+    file_builder.add_input_file("base/index.adoc", register=False)
+    file_builder.add_package_file("my-package", "nice-doc.adoc", register=False)
+    doc = file_builder.add_package_file("other-package", "other-doc.adoc", register=False)
+    context = file_builder.context()
+
+    with pytest.raises(UnknownFileError):
+        context.find_document("my-package", doc.relative_path)
+    with pytest.raises(UnknownFileError):
+        context.find_document("my-package", doc.relative_path)
+
+
+def test_find_document__pkg__package_name_must_match_for_known_files_too(file_builder):
+    file_builder.add_input_file("base/index.adoc", register=False)
+    doc = file_builder.add_package_file("my-package", "nice-doc.adoc", register=False)
+    context = file_builder.context()
+
+    new_doc = context.find_document("my-package", doc.relative_path)
+    assert new_doc.relative_path == doc.relative_path
+    assert new_doc.package.name == "my-package"
+
+    with pytest.raises(UnknownFileError):
+        context.find_document("other-package", doc.relative_path)
+
+
+def test_find_document__pkg__unknown_package(file_builder):
+    file_builder.add_input_file("base/index.adoc", register=False)
+    doc = file_builder.add_package_file("my-package", "nice-doc.adoc", register=False)
+    context = file_builder.context()
+
+    with pytest.raises(UnknownPackageError):
+        context.find_document("other-package", doc.relative_path)
+    with pytest.raises(UnknownPackageError):
+        context.find_document("other-package", doc.relative_path)
+
+
+def test_find_document__pkg__default_file(file_builder):
+    file_builder.add_input_file("base/index.adoc", register=False)
+    doc = file_builder.add_package_default_file("my-package", "nice-doc.adoc", register=False)
+    context = file_builder.context()
+
+    new_doc = context.find_document("my-package", None)
+    assert new_doc.relative_path == doc.relative_path
+    assert new_doc.package.name == "my-package"
+
+    known_doc = context.find_document("my-package", None)
+    assert known_doc.relative_path == doc.relative_path
+    assert known_doc.package.name == "my-package"
+
+    assert new_doc is known_doc
+
+
+def test_find_document__pkg__no_default_file(file_builder):
+    file_builder.add_input_file("base/index.adoc", register=False)
+    file_builder.add_package_file("my-package", "nice-doc.adoc", register=False)
+    context = file_builder.context()
+
+    with pytest.raises(UnknownFileError):
+        context.find_document("my-package", None)
+    with pytest.raises(UnknownFileError):
+        context.find_document("my-package", None)
+
+
 def test_stacktrace__external_only(input_file):
     other_file = input_file.parent / "other_file.adoc"
 
     trace = [
-        StackFrame("include('other_file.adoc')", input_file, "INPUT", False),
-        StackFrame("insert('MyElement')", other_file, "INPUT", False),
+        StackFrame("include('other_file.adoc')", input_file, Package.INPUT_PACKAGE_NAME, False),
+        StackFrame("insert('MyElement')", other_file, Package.INPUT_PACKAGE_NAME, False),
     ]
     assert stacktrace(trace) == f"""\
 Commands in input files:
@@ -532,8 +665,8 @@ def test_stacktrace__external_and_internal(input_file):
     other_file = input_file.parent / "other_file.adoc"
 
     trace = [
-        StackFrame("include('other_file.adoc')", input_file, "INPUT", False),
-        StackFrame("insert('MyElement')", other_file, "INPUT", False),
+        StackFrame("include('other_file.adoc')", input_file, Package.INPUT_PACKAGE_NAME, False),
+        StackFrame("insert('MyElement')", other_file, Package.INPUT_PACKAGE_NAME, False),
         StackFrame("insert('OtherElement')", None, None, True),
         StackFrame("link('GreatElement')", None, None, True),
     ]

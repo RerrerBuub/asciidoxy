@@ -22,8 +22,9 @@ from typing import Dict, List, MutableMapping, NamedTuple, Optional, Set, Tuple
 from tqdm import tqdm
 
 from ..api_reference import ApiReference
+from ..document import Document, Package
 from ..model import ReferableElement
-from ..packaging import Package, PackageManager
+from ..packaging import PackageManager, UnknownFileError
 from ..path_utils import relative_path
 from .errors import ConsistencyError, DuplicateAnchorError, UnknownAnchorError
 from .filters import InsertionFilter
@@ -90,7 +91,7 @@ def stacktrace(trace: List[StackFrame], prefix: str = "") -> str:
     if not trace[0].internal:
         lines.append(f"{prefix}Commands in input files:")
     while trace and not trace[0].internal:
-        if trace[0].package and trace[0].package != "INPUT":
+        if trace[0].package and trace[0].package != Package.INPUT_PACKAGE_NAME:
             pkg = f"{trace[0].package}:/"
         else:
             pkg = ""
@@ -112,25 +113,22 @@ class Context(object):
     This information is meant to be shared with all included documents as well.
 
     Attributes:
-        base_dir:           Base directory from which the documentation is generated. Relative
-                                paths are relative to the base directory.
-        namespace:          Current namespace to use when looking up references.
-        language:           Default language to use when looking up references.
-        insert_filter:      Filter used to select members of elements to insert.
-        env:                Environment variables to share with subdocuments.
-        warnings_are_errors:True to treat every warning as an error.
-        multipage:          True when multi page output is enabled.
-        reference:          API reference information.
-        linked:             All elements to which links are inserted in the documentation.
-        inserted:           All elements that have been inserted in the documentation.
-        anchors:            Mapping from flexible anchors to the containing files.
-        in_to_out_file_map: Mapping from input files for AsciiDoctor to the resulting output files.
-        current_document:   Node in the Document Tree that is currently being processed.
-        current_package:    Package containing the current files.
-        call_stack:         Stack of actions resulting in the current action.
+        namespace:             Current namespace to use when looking up references.
+        language:              Default language to use when looking up references.
+        insert_filter:         Filter used to select members of elements to insert.
+        env:                   Environment variables to share with subdocuments.
+        warnings_are_errors:   True to treat every warning as an error.
+        multipage:             True when multi page output is enabled.
+        reference:             API reference information.
+        linked:                All elements to which links are inserted in the documentation.
+        inserted:              All elements that have been inserted in the documentation.
+        anchors:               Mapping from flexible anchors to the containing files.
+        in_to_out_file_map:    Mapping from input files for AsciiDoctor to the resulting output
+                                   files.
+        current_document_node: Node in the Document Tree that is currently being processed.
+        current_package:       Package containing the current files.
+        call_stack:            Stack of actions resulting in the current action.
     """
-    base_dir: Path
-
     namespace: Optional[str] = None
     language: Optional[str] = None
     source_language: Optional[str] = None
@@ -146,18 +144,24 @@ class Context(object):
     progress: Optional[tqdm] = None
 
     linked: Dict[str, List[List[StackFrame]]]
+    # TODO: Use Document
     inserted: MutableMapping[str, Tuple[Path, List[StackFrame]]]
+    # TODO: Use DOcument
     anchors: Dict[str, Tuple[Path, Optional[str]]]
+    # TODO: Remove
     in_to_out_file_map: Dict[Path, Path]
+    # TODO: Remove
     embedded_file_map: Dict[Path, Set[Path]]
-    current_document: DocumentTreeNode
+    # TODO: Remove
+    current_document_node: DocumentTreeNode
+    # TODO: Use from document
     current_package: Package
     call_stack: List[StackFrame]
 
-    def __init__(self, base_dir: Path, reference: ApiReference, package_manager: PackageManager,
-                 current_document: DocumentTreeNode, current_package: Package):
-        self.base_dir = base_dir
+    documents: Dict[Path, Document]
 
+    def __init__(self, reference: ApiReference, package_manager: PackageManager,
+                 current_document_node: DocumentTreeNode, current_package: Package):
         self.insert_filter = InsertionFilter(members={"prot": ["+public", "+protected"]})
         self.env = Environment()
 
@@ -169,9 +173,11 @@ class Context(object):
         self.anchors = {}
         self.in_to_out_file_map = {}
         self.embedded_file_map = defaultdict(set)
-        self.current_document = current_document
+        self.current_document_node = current_document_node
         self.current_package = current_package
         self.call_stack = []
+
+        self.documents = {}
 
     def insert(self, element: ReferableElement) -> None:
         assert element.id
@@ -184,13 +190,12 @@ class Context(object):
                 raise ConsistencyError(msg)
             else:
                 logger.warning(msg)
-        self.inserted[element.id] = (self.current_document.in_file, self.call_stack[:])
+        self.inserted[element.id] = (self.current_document_node.in_file, self.call_stack[:])
 
     def sub_context(self) -> "Context":
-        sub = Context(base_dir=self.base_dir,
-                      reference=self.reference,
+        sub = Context(reference=self.reference,
                       package_manager=self.package_manager,
-                      current_document=self.current_document,
+                      current_document_node=self.current_document_node,
                       current_package=self.current_package)
 
         # Copies
@@ -211,6 +216,7 @@ class Context(object):
         sub.embedded_file_map = self.embedded_file_map
         sub.progress = self.progress
         sub.call_stack = self.call_stack
+        sub.documents = self.documents
 
         return sub
 
@@ -220,7 +226,7 @@ class Context(object):
 
         containing_file = self.inserted[element_id][0]
         assert containing_file is not None
-        if self.current_document.in_file != containing_file:
+        if self.current_document_node.in_file != containing_file:
             return containing_file
         else:
             return None
@@ -228,10 +234,33 @@ class Context(object):
     def link_to_element(self, element_id: str) -> None:
         self.linked[element_id].append(self.call_stack[:])
 
+    def find_document(self, package_name: Optional[str], rel_path: Optional[Path]) -> Document:
+        # TODO: Deduplicate and optimize
+        assert package_name or rel_path
+
+        if rel_path is None:
+            default_doc = self.package_manager.make_document(package_name)
+            known_doc = self.documents.get(default_doc.relative_path)
+            if known_doc is None:
+                self.documents[default_doc.relative_path] = default_doc
+                return default_doc
+            return known_doc
+
+        else:
+
+            known_doc = self.documents.get(rel_path)
+            if known_doc is None:
+                doc = self.package_manager.make_document(package_name, rel_path)
+                self.documents[doc.relative_path] = doc
+                return doc
+            elif package_name and known_doc.package.name != package_name:
+                raise UnknownFileError(package_name, str(rel_path))
+            return known_doc
+
     def register_adoc_file(self, in_file: Path) -> Path:
         assert in_file.is_absolute()
         if self.embedded:
-            out_file = self.current_document.in_file
+            out_file = self.current_document_node.in_file
             self.embedded_file_map[in_file].add(out_file)
         else:
             known_out_file = self.in_to_out_file_map.get(in_file)
@@ -258,12 +287,13 @@ class Context(object):
             if embedded_files is not None:
                 if len(embedded_files) == 1:
                     # File is only embedded in one file, link to that file
-                    return relative_path(self.current_document.in_file, list(embedded_files)[0])
+                    return relative_path(self.current_document_node.in_file,
+                                         list(embedded_files)[0])
                 else:
                     # File is embedded multiple time, can only link if it is embedded in the
                     # current document
-                    if self.current_document.in_file in embedded_files:
-                        return Path(self.current_document.in_file.name)
+                    if self.current_document_node.in_file in embedded_files:
+                        return Path(self.current_document_node.in_file.name)
                     else:
                         raise ConsistencyError("Cannot resolve link to embedded file: The same file"
                                                " is embedded multiple times. Either embed the file"
@@ -271,7 +301,7 @@ class Context(object):
                                                " files it is embedded in.")
             else:
                 # File is not embedded, link to original file name
-                return relative_path(self.current_document.in_file, file_name)
+                return relative_path(self.current_document_node.in_file, file_name)
 
         else:
             # In singlepage mode all links need to be relative to the root file
@@ -279,14 +309,14 @@ class Context(object):
             if embedded_files is not None:
                 if len(embedded_files) == 1:
                     # File is only embedded in one file, link to that file
-                    return relative_path(self.current_document.root().in_file,
+                    return relative_path(self.current_document_node.root().in_file,
                                          list(embedded_files)[0])
                 else:
                     # File is embedded multiple time, can only link if it is embedded in the
                     # current document
-                    if self.current_document.in_file in embedded_files:
-                        return relative_path(self.current_document.root().in_file,
-                                             self.current_document.in_file)
+                    if self.current_document_node.in_file in embedded_files:
+                        return relative_path(self.current_document_node.root().in_file,
+                                             self.current_document_node.in_file)
                     else:
                         raise ConsistencyError("Cannot resolve link to embedded file: The same file"
                                                " is embedded multiple times. Either embed the file"
@@ -297,17 +327,17 @@ class Context(object):
             if out_file is not None:
                 # File has been processed, and as we are in single page mode, it is embedded as
                 # well
-                return relative_path(self.current_document.root().in_file, out_file)
+                return relative_path(self.current_document_node.root().in_file, out_file)
 
             else:
                 # File is not processed, create relative link from current top level document
-                return relative_path(self.current_document.root().in_file, file_name)
+                return relative_path(self.current_document_node.root().in_file, file_name)
 
     def docinfo_footer_file(self) -> Path:
         if self.multipage:
-            in_file = self.current_document.in_file
+            in_file = self.current_document_node.in_file
         else:
-            in_file = self.current_document.root().in_file
+            in_file = self.current_document_node.root().in_file
 
         out_file = self.in_to_out_file_map.get(in_file, None)
         if out_file is None:
