@@ -170,7 +170,7 @@ class Document:
         Returns:
             The relative path from the current document.
         """
-        return relative_path(self.original_file, doc.original_file)
+        return relative_path(self.work_file, doc.work_file)
 
     def resolve_relative_path(self, to: Union[str, PathLike[str]]) -> Path:
         """Determine a workspace/package relative path from a relative path starting at the current
@@ -182,9 +182,8 @@ class Document:
         Returns:
             A path relative to the workspace/package root.
         """
-        assert self.package.adoc_src_dir
-        abs_path = (self.original_file.parent / to).resolve()
-        return relative_path(self.package.adoc_src_dir / "does_not_matter", abs_path)
+        abs_path = (self.work_file.parent / to).resolve()
+        return relative_path(self.work_dir / "does_not_matter", abs_path)
 
     def include(self, child: "Document") -> None:
         """Include another document in this document."""

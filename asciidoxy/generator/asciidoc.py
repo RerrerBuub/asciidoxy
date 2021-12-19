@@ -448,7 +448,7 @@ class Api(ABC):
         if always_embed:
             return sub_api.render_adoc()
 
-        out_file = sub_api.process_adoc()
+        sub_api.process_adoc()
 
         if self._context.multipage and not always_embed:
             if multipage_link:
@@ -463,7 +463,8 @@ class Api(ABC):
             asciidoc_options["leveloffset"] = leveloffset
         attributes = ",".join(f"{str(key)}={str(value)}" for key, value in asciidoc_options.items())
 
-        return f"[[{self._file_top_anchor(doc)}]]\ninclude::{out_file}[{attributes}]"
+        rel_path = self._document.relative_path_to(doc)
+        return f"[[{self._file_top_anchor(doc)}]]\ninclude::{rel_path}[{attributes}]"
 
     def language(self, lang: Optional[str], *, source: Optional[str] = None) -> str:
         """Set the default language for all following commands.
@@ -751,6 +752,7 @@ class PreprocessingApi(Api):
         sub_context = self._context.sub_context()
         sub_context.current_package = document.package
 
+        # TODO: Unit test: document tree is correctly constructed
         if embedded:
             sub_context.embedded = True
             self._document.embed(document)

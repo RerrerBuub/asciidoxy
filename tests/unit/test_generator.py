@@ -920,8 +920,8 @@ def test_include__relative_path(file_builder):
         assert lines[1].endswith("[leveloffset=+1]")
 
         file_name = input_file.work_dir / lines[1][9:-16]
-        assert file_name.is_file() == isinstance(api, GeneratingApi)
-        assert file_name.name == ".asciidoxy.another_file.adoc"
+        assert file_name.is_file()
+        assert file_name.name == "another_file.adoc"
         assert file_name.is_absolute()
 
 
@@ -939,9 +939,9 @@ def test_include__relative_path__parent_directory(file_builder):
         assert lines[1].startswith("include::")
         assert lines[1].endswith("[leveloffset=+1]")
 
-        file_name = input_file.work_dir / lines[1][9:-16]
-        assert file_name.is_file() == isinstance(api, GeneratingApi)
-        assert file_name.name == ".asciidoxy.another_file.adoc"
+        file_name = input_file.work_dir / "src" / lines[1][9:-16]
+        assert file_name.is_file()
+        assert file_name.name == "another_file.adoc"
         assert file_name.is_absolute()
 
 
@@ -981,8 +981,8 @@ def test_include__from_package(file_builder):
         assert lines[1].endswith("[leveloffset=+1]")
 
         file_name = input_file.work_dir / lines[1][9:-16]
-        assert file_name.is_file() == isinstance(api, GeneratingApi)
-        assert file_name.name == ".asciidoxy.another_file.adoc"
+        assert file_name.is_file()
+        assert file_name.name == "another_file.adoc"
         assert file_name.is_absolute()
 
 
@@ -1008,8 +1008,8 @@ ${include("yet_another_file.adoc")}
         assert lines[1].endswith("[leveloffset=+1]")
 
         file_name = input_file.work_dir / lines[1][9:-16]
-        assert file_name.is_file() == isinstance(api, GeneratingApi)
-        assert file_name.name == ".asciidoxy.another_file.adoc"
+        assert file_name.is_file()
+        assert file_name.name == "another_file.adoc"
         assert file_name.is_absolute()
 
 
@@ -1054,8 +1054,8 @@ def test_include__direct_access_to_other_package_for_old_style_packages(file_bui
         assert lines[1].endswith("[leveloffset=+1]")
 
         file_name = input_file.work_dir / lines[1][9:-16]
-        assert file_name.is_file() == isinstance(api, GeneratingApi)
-        assert file_name.name == ".asciidoxy.another_file.adoc"
+        assert file_name.is_file()
+        assert file_name.name == "another_file.adoc"
         assert file_name.is_absolute()
 
 
@@ -1172,6 +1172,25 @@ def test_include__always_embed__correct_sub_context(file_builder, tdb_single_and
             else:
                 # singlepage
                 assert result == "<<.asciidoxy.input.adoc#bla,bla>>"
+
+
+# TODO: Complete document refactoring
+@pytest.mark.skip
+def test_include__store_document_tree(file_builder, tdb_single_and_multipage):
+    file_builder.add_input_file("input.adoc")
+    include_file = file_builder.add_include_file("include.adoc")
+    include_file.work_file.write_text("""\
+${include("first.adoc")}
+${include("second.adoc")}
+${include("third.adoc", always_embed=True)}""")
+    file_builder.add_include_file("first.adoc")
+    file_builder.add_include_file("second.adoc")
+    file_builder.add_include_file("third.adoc")
+
+    for api in file_builder.apis():
+        api.include("include.adoc")
+
+        # TODO: Check tree
 
 
 def test_multipage_toc__default(generating_api, input_file, multipage):
@@ -1523,8 +1542,8 @@ def test_api_proxy__include(file_builder):
         assert lines[1].endswith("[leveloffset=+1]")
 
         file_name = input_file.work_dir / lines[1][9:-16]
-        assert file_name.is_file() == isinstance(api, GeneratingApi)
-        assert file_name.name == ".asciidoxy.another_file.adoc"
+        assert file_name.is_file()
+        assert file_name.name == "another_file.adoc"
         assert file_name.is_absolute()
 
 
@@ -1544,8 +1563,8 @@ def test_api_proxy__include__old_syntax(file_builder):
         assert lines[1].endswith("[leveloffset=+2]")
 
         file_name = input_file.work_dir / lines[1][9:-16]
-        assert file_name.is_file() == isinstance(api, GeneratingApi)
-        assert file_name.name == ".asciidoxy.another_file.adoc"
+        assert file_name.is_file()
+        assert file_name.name == "another_file.adoc"
         assert file_name.is_absolute()
 
 
