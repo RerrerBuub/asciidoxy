@@ -234,7 +234,9 @@ class Api(ABC):
                members: Optional[FilterSpec] = None,
                exceptions: Optional[FilterSpec] = None,
                ignore_global_filter: bool = False,
-               leveloffset: str = "+1") -> str:
+               leveloffset: str = "+1",
+               kind_override: Optional[str] = None,) -> str:
+
         """Insert API reference documentation.
 
         Only `name` is mandatory. Multiple names may match the same name. Use `kind` and `lang` to
@@ -267,7 +269,7 @@ class Api(ABC):
 
         return self.insert_fragment(
             self.find_element(name, kind=kind, lang=lang, allow_overloads=False), insert_filter,
-            leveloffset)
+            leveloffset, kind_override)
 
     @_api_stackframe
     def link(self,
