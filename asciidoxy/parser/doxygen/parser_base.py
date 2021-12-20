@@ -204,7 +204,7 @@ class ParserBase(ABC):
         member.name, member.full_name, member.namespace = self.TRAITS.names(
             memberdef_element.findtext("name", ""), parent.full_name, member.kind)
         member.include = self.find_include(memberdef_element)
-
+        member.initializer = memberdef_element.findtext("initializer", "")
         if self.TRAITS.is_member_blacklisted(member.kind, member.name):
             return None
 
@@ -248,6 +248,7 @@ class ParserBase(ABC):
         compound.id = self.TRAITS.unique_id(compounddef_element.get("id"))
         compound.kind = compounddef_element.get("kind", "")
         compound.prot = compounddef_element.get("prot", "")
+        compound.initializer = compounddef_element.get("initializer", "")
 
         compound.name, compound.full_name, compound.namespace = self.TRAITS.names(
             compounddef_element.findtext("compoundname", ""), kind=compound.kind)
