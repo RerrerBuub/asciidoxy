@@ -152,6 +152,22 @@ class Parameter(ModelBase):
                  self.prefix) == (other.type, other.name, other.description, other.default_value,
                                   other.prefix))
 
+class ReturnValueList(ModelBase):
+    """ discrete return value
+
+    Attributes:
+        name:          Value returned .
+        description:   Explanation of the name/value.
+    """
+
+    # doxygen based fields
+    name: str = ""
+    description: str = ""
+
+    def __eq__(self, other) -> bool:
+        if other is None:
+            return False
+        return ((self.name, self.description) == (other.name, other.description))
 
 class ReturnValue(ModelBase):
     """Value returned from a member.
@@ -159,10 +175,12 @@ class ReturnValue(ModelBase):
     Attributes:
         type:        Reference to the type of return value.
         description: Explanation of the return value.
+        valuelist:   List of possible return values 
     """
 
     type: Optional[TypeRef] = None
     description: str = ""
+    valuelist: Optional[ReturnValueList] = None
 
     def __eq__(self, other) -> bool:
         if other is None:

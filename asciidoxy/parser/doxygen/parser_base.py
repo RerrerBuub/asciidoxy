@@ -26,10 +26,22 @@ from .description_parser import (parse_description, select_descriptions, Admonit
 from .driver_base import DriverBase
 from .language_traits import LanguageTraits
 from .type_parser import TypeParser, TypeParseError
-from ...model import Compound, Parameter, ReturnValue, ThrowsClause, TypeRef
+from ...model import Compound, Parameter, ReturnValue, ThrowsClause, TypeRef, ReturnValueList
 
 logger = logging.getLogger(__name__)
 
+
+def _find_return_value(descriptions: ParameterList):
+    retval = []
+    rvalue = ReturnValueList()
+    if descriptions:
+      for param_item in descriptions.children_of_type(ParameterItem):
+        for param_name in param_item.names():
+          rvalue = ReturnValueList()
+          rvalue.name = param_name.name
+          rvalue.description = _to_asciidoc_or_empty(param_item.description())
+          retval.append(rvalue)
+    return retval
 
 def _yes_no_to_bool(yes_no: str) -> bool:
     if yes_no == "yes":
@@ -162,12 +174,16 @@ class ParserBase(ABC):
                     self._driver.unresolved_ref(exception.type)
         return exceptions
 
-    def parse_returns(self, memberdef_element: ET.Element, parent: Compound,
-                      description: Optional[Admonition]) -> Optional[ReturnValue]:
+    def parse_returns(self, 
+                      memberdef_element: ET.Element, 
+                      parent: Compound,
+                      description: Optional[Admonition],
+                      retvals: Optional[ParameterList] = None ) -> Optional[ReturnValue]:
         returns = ReturnValue()
         returns.type = self.parse_type(memberdef_element.find("type"), namespace=parent.namespace)
         returns.description = _to_asciidoc_or_empty(description)
-
+        returns.valuelist = _find_return_value(retvals)
+        
         if returns.type:
             return returns
         else:
@@ -212,10 +228,12 @@ class ParserBase(ABC):
         detailed = parse_description(memberdef_element.find("detaileddescription"), self.TRAITS.TAG)
 
         # First extract other descriptions
-        member.returns = self.parse_returns(memberdef_element, member,
-                                            detailed.pop_section(Admonition, "return"))
         member.params = self.parse_parameters(memberdef_element, member,
                                               detailed.pop_section(ParameterList, "param"))
+        member.returns = self.parse_returns(memberdef_element, member,
+                                            detailed.pop_section(Admonition, "return"),
+                                            detailed.pop_section(ParameterList, "retval"))
+
         member.exceptions = self.parse_exceptions(memberdef_element, member,
                                                   detailed.pop_section(ParameterList, "exception"))
         member.sections = _pop_sections(detailed)
