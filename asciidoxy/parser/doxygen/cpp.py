@@ -21,9 +21,14 @@ import xml.etree.ElementTree as ET
 from typing import List, Optional
 
 from .language_traits import LanguageTraits, TokenCategory
-from .parser_base import ParserBase
+from .parser_base import ParserBase, _find_parameter_documentation, _to_asciidoc_or_empty
 from .type_parser import Token, TypeParser, find_tokens
-from ...model import Compound, Parameter
+from ...model import Compound, Parameter, TypeRef
+from .description_parser import (parse_description, select_descriptions, Admonition,
+                                 NestedDescriptionElement, ParaContainer, ParameterItem,
+                                 ParameterList, Ref)
+
+
 
 
 class CppTraits(LanguageTraits):
@@ -140,6 +145,61 @@ class CppParser(ParserBase):
     DEFAULTED_RE = re.compile(r"=\s*default\s*$")
     DELETED_RE = re.compile(r"=\s*delete\s*$")
 
+
+    @classmethod
+    def typename_from_tokens(cls,
+                         tokens: List[Token],
+                         namespace: Optional[str] = None) -> Optional[TypeRef]:
+        """Create a `TypeRef` from a sequence of tokens.
+
+        Returns:
+            A `TypeRef` if sufficient tokens are present, or None if all tokens are whitespace.
+        """
+        if not tokens or all(t.category == TokenCategory.WHITESPACE for t in tokens):
+            return None
+
+        original_tokens = tokens
+        tokens = tokens[:]
+
+        def fallback():
+            return TypeRef(cls.TRAITS.TAG, "".join(t.text for t in original_tokens))
+
+        def log_parse_warning():
+            logger.warning(f"Could not fully parse `{''.join(t.text for t in original_tokens)}`."
+                           " Links to known types may be missing.")
+
+
+        
+        cls.TYPE_PARSER.remove_leading_whitespace(tokens)
+        cls.TYPE_PARSER.remove_trailing_whitespace(tokens)
+
+        names = tokens[-1:]
+        
+        tokens = tokens[0:-1]
+
+        cls.TYPE_PARSER.remove_leading_whitespace(tokens)
+        tokens[:0] = cls.TYPE_PARSER.remove_trailing_whitespace(tokens)
+
+        if not names:
+            log_parse_warning()
+            logger.debug(f"No name found in `{'`,`'.join(t.text for t in original_tokens)}`")
+            return fallback()
+
+        type_ref = TypeRef(cls.TRAITS.TAG)
+
+        type_ref.name = cls.TRAITS.cleanup_name("".join(n.text for n in names))
+        type_ref.prefix = ""
+        type_ref.suffix = None
+        type_ref.nested = None
+        type_ref.id = cls.TRAITS.unique_id(names[0].refid)
+        type_ref.kind = names[0].kind
+
+        type_ref.args = cls.TRAITS.cleanup_name("".join(n.text for n in tokens))
+        type_ref.namespace = None
+
+        return type_ref
+
+
     def parse_member(self, memberdef_element: ET.Element, parent: Compound) -> Optional[Compound]:
         member = super().parse_member(memberdef_element, parent)
 
@@ -151,11 +211,13 @@ class CppParser(ParserBase):
                 and member.definition.startswith("using")):
             member.kind = "alias"
 
-        member = self._fix_function_typedef(member, memberdef_element)
+        detailed = parse_description(memberdef_element.find("detaileddescription"), self.TRAITS.TAG)
+        member = self._fix_function_typedef(member, memberdef_element, detailed.pop_section(ParameterList, "param"))
         return member
 
     def _fix_function_typedef(self, member: Optional[Compound],
-                              memberdef_element: ET.Element) -> Optional[Compound]:
+                              memberdef_element: ET.Element,
+                              descriptions: Optional[ParameterList]) -> Optional[Compound]:
         if member is None:
             return None
         if member.kind != "typedef" or not member.args:
@@ -177,8 +239,18 @@ class CppParser(ParserBase):
                 tokens.pop(0)
 
             if type_tokens:
-                ref = self.TYPE_PARSER.type_from_tokens(type_tokens, self._driver, member.full_name)
+                ref = self.typename_from_tokens(type_tokens, member.full_name)
+
                 if ref is not None:
-                    member.params.append(Parameter(type=ref))
+                    param = Parameter(type=TypeRef(name=ref.args))
+                    if type_tokens[-1].category == TokenCategory.NAME:
+                        param.name=type_tokens[-1].text
+                        pass
+                    if descriptions:
+                        documentation = _find_parameter_documentation(descriptions, param.name)
+                        if documentation:
+                            param.description = _to_asciidoc_or_empty(documentation.description())
+
+                    member.params.append(param)
 
         return member
